@@ -2,22 +2,17 @@ package com.aliano.mutiagent.config;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.util.StringUtils;
 
 @ConfigurationProperties(prefix = "muti-agent")
+@Getter
 public class MutiAgentProperties {
 
     private final Storage storage = new Storage();
     private final Runtime runtime = new Runtime();
-
-    public Storage getStorage() {
-        return storage;
-    }
-
-    public Runtime getRuntime() {
-        return runtime;
-    }
 
     public Path resolveBaseDir() {
         if (StringUtils.hasText(storage.baseDir)) {
@@ -46,6 +41,8 @@ public class MutiAgentProperties {
         return resolveBaseDir().resolve(storage.runtimeRelativeDir).normalize();
     }
 
+    @Getter
+    @Setter
     public static class Storage {
 
         private String baseDir;
@@ -54,57 +51,12 @@ public class MutiAgentProperties {
         private String appLogRelativeDir = "logs/app";
         private String runtimeRelativeDir = "runtime";
 
-        public String getBaseDir() {
-            return baseDir;
-        }
-
-        public void setBaseDir(String baseDir) {
-            this.baseDir = baseDir;
-        }
-
-        public String getDatabaseRelativePath() {
-            return databaseRelativePath;
-        }
-
-        public void setDatabaseRelativePath(String databaseRelativePath) {
-            this.databaseRelativePath = databaseRelativePath;
-        }
-
-        public String getSessionLogRelativeDir() {
-            return sessionLogRelativeDir;
-        }
-
-        public void setSessionLogRelativeDir(String sessionLogRelativeDir) {
-            this.sessionLogRelativeDir = sessionLogRelativeDir;
-        }
-
-        public String getAppLogRelativeDir() {
-            return appLogRelativeDir;
-        }
-
-        public void setAppLogRelativeDir(String appLogRelativeDir) {
-            this.appLogRelativeDir = appLogRelativeDir;
-        }
-
-        public String getRuntimeRelativeDir() {
-            return runtimeRelativeDir;
-        }
-
-        public void setRuntimeRelativeDir(String runtimeRelativeDir) {
-            this.runtimeRelativeDir = runtimeRelativeDir;
-        }
     }
 
+    @Getter
+    @Setter
     public static class Runtime {
 
         private long gracefulStopWaitMs = 1500L;
-
-        public long getGracefulStopWaitMs() {
-            return gracefulStopWaitMs;
-        }
-
-        public void setGracefulStopWaitMs(long gracefulStopWaitMs) {
-            this.gracefulStopWaitMs = gracefulStopWaitMs;
-        }
     }
 }

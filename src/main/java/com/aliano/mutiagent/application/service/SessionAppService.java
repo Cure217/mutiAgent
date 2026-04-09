@@ -22,14 +22,18 @@ import com.aliano.mutiagent.infrastructure.process.StopMode;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
+@RequiredArgsConstructor
 public class SessionAppService {
 
     private final SessionMapper sessionMapper;
@@ -41,26 +45,6 @@ public class SessionAppService {
     private final SessionStreamAppService sessionStreamAppService;
     private final IdGenerator idGenerator;
     private final ObjectMapper objectMapper;
-
-    public SessionAppService(SessionMapper sessionMapper,
-                             MessageMapper messageMapper,
-                             AppInstanceMapper appInstanceMapper,
-                             AdapterRegistry adapterRegistry,
-                             ProcessSupervisor processSupervisor,
-                             SessionEventPublisher sessionEventPublisher,
-                             SessionStreamAppService sessionStreamAppService,
-                             IdGenerator idGenerator,
-                             ObjectMapper objectMapper) {
-        this.sessionMapper = sessionMapper;
-        this.messageMapper = messageMapper;
-        this.appInstanceMapper = appInstanceMapper;
-        this.adapterRegistry = adapterRegistry;
-        this.processSupervisor = processSupervisor;
-        this.sessionEventPublisher = sessionEventPublisher;
-        this.sessionStreamAppService = sessionStreamAppService;
-        this.idGenerator = idGenerator;
-        this.objectMapper = objectMapper;
-    }
 
     public PageResponse<AiSession> list(String appInstanceId, String status, String keyword, int pageNo, int pageSize) {
         int validPageNo = Math.max(pageNo, 1);
@@ -91,6 +75,22 @@ public class SessionAppService {
         List<MessageRecord> items = messageMapper.findPage(sessionId, validPageSize, offset);
         long total = messageMapper.countBySessionId(sessionId);
         return new PageResponse<>(items, validPageNo, validPageSize, total);
+    }
+
+    public String rawOutput(String sessionId) {
+        AiSession session = get(sessionId);
+        if (!StringUtils.hasText(session.getRawLogPath())) {
+            return "";
+        }
+        try {
+            Path path = Path.of(session.getRawLogPath());
+            if (!Files.exists(path)) {
+                return "";
+            }
+            return Files.readString(path);
+        } catch (IOException exception) {
+            throw new BusinessException("读取原始日志失败", exception);
+        }
     }
 
     public AiSession createAndStart(CreateSessionRequest request) {
@@ -141,7 +141,7 @@ public class SessionAppService {
             sessionEventPublisher.publish("session.status.changed", session.getId(), runningPayload);
 
             if (StringUtils.hasText(request.initInput()) && adapter.supportsInteractiveInput()) {
-                sendInput(session.getId(), request.initInput(), true);
+                sendInput(session.getId(), request.initInput(), true, true);
             }
             return get(session.getId());
         } catch (IOException exception) {
@@ -154,14 +154,16 @@ public class SessionAppService {
         }
     }
 
-    public void sendInput(String sessionId, String content, boolean appendNewLine) {
+    public void sendInput(String sessionId, String content, boolean appendNewLine, boolean recordInput) {
         AiSession session = get(sessionId);
         if (!SessionStatus.RUNNING.name().equals(session.getStatus())) {
             throw new BusinessException("当前会话不可输入");
         }
         try {
             processSupervisor.sendInput(sessionId, content, appendNewLine);
-            sessionStreamAppService.recordUserInput(sessionId, content, "manual-input");
+            if (recordInput) {
+                sessionStreamAppService.recordUserInput(sessionId, content, "manual-input");
+            }
         } catch (IOException exception) {
             throw new BusinessException("发送输入失败", exception);
         }
@@ -179,6 +181,14 @@ public class SessionAppService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("status", SessionStatus.STOPPING.name());
         sessionEventPublisher.publish("session.status.changed", sessionId, payload);
+    }
+
+    public void resizeTerminal(String sessionId, int cols, int rows) {
+        AiSession session = get(sessionId);
+        if (!SessionStatus.RUNNING.name().equals(session.getStatus())) {
+            return;
+        }
+        processSupervisor.resizeTerminal(sessionId, cols, rows);
     }
 
     private String resolveInteractionMode(String interactionMode) {

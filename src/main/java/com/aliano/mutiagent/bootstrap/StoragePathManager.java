@@ -7,18 +7,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @Component
+@RequiredArgsConstructor
 public class StoragePathManager {
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.BASIC_ISO_DATE;
 
     private final MutiAgentProperties properties;
-
-    public StoragePathManager(MutiAgentProperties properties) {
-        this.properties = properties;
-    }
 
     @PostConstruct
     public void initialize() throws IOException {

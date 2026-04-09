@@ -9,6 +9,8 @@ public interface ProcessSupervisor {
 
     void sendInput(String sessionId, String input, boolean appendNewLine) throws IOException;
 
+    void resizeTerminal(String sessionId, int cols, int rows);
+
     void stop(String sessionId, StopMode stopMode);
 
     List<ProcessRuntime> listRunning();

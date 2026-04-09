@@ -12,9 +12,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
 public class SessionStreamAppService {
 
     private final MessageMapper messageMapper;
@@ -22,16 +24,6 @@ public class SessionStreamAppService {
     private final SessionEventPublisher sessionEventPublisher;
     private final IdGenerator idGenerator;
     private final ConcurrentMap<String, Object> messageLocks = new ConcurrentHashMap<>();
-
-    public SessionStreamAppService(MessageMapper messageMapper,
-                                   SessionMapper sessionMapper,
-                                   SessionEventPublisher sessionEventPublisher,
-                                   IdGenerator idGenerator) {
-        this.messageMapper = messageMapper;
-        this.sessionMapper = sessionMapper;
-        this.sessionEventPublisher = sessionEventPublisher;
-        this.idGenerator = idGenerator;
-    }
 
     public void recordUserInput(String sessionId, String content, String sourceAdapter) {
         appendMessage(sessionId, "user", "text", content, null, null, true, sourceAdapter);

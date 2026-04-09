@@ -1,6 +1,7 @@
 package com.aliano.mutiagent.controller;
 
 import com.aliano.mutiagent.application.dto.CreateSessionRequest;
+import com.aliano.mutiagent.application.dto.ResizeTerminalRequest;
 import com.aliano.mutiagent.application.dto.SendInputRequest;
 import com.aliano.mutiagent.application.dto.StopSessionRequest;
 import com.aliano.mutiagent.application.service.SessionAppService;
@@ -11,6 +12,7 @@ import com.aliano.mutiagent.domain.session.AiSession;
 import com.aliano.mutiagent.infrastructure.process.StopMode;
 import jakarta.validation.Valid;
 import java.util.List;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,13 +23,10 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/sessions")
+@RequiredArgsConstructor
 public class SessionController {
 
     private final SessionAppService sessionAppService;
-
-    public SessionController(SessionAppService sessionAppService) {
-        this.sessionAppService = sessionAppService;
-    }
 
     @GetMapping
     public ApiResponse<PageResponse<AiSession>> list(@RequestParam(required = false) String appInstanceId,
@@ -55,7 +54,12 @@ public class SessionController {
 
     @PostMapping("/{id}/input")
     public ApiResponse<Void> input(@PathVariable String id, @Valid @RequestBody SendInputRequest request) {
-        sessionAppService.sendInput(id, request.content(), request.appendNewLine() == null || request.appendNewLine());
+        sessionAppService.sendInput(
+                id,
+                request.content(),
+                request.appendNewLine() == null || request.appendNewLine(),
+                request.recordInput() == null || request.recordInput()
+        );
         return ApiResponse.success();
     }
 
@@ -69,10 +73,21 @@ public class SessionController {
         return ApiResponse.success();
     }
 
+    @PostMapping("/{id}/terminal/resize")
+    public ApiResponse<Void> resizeTerminal(@PathVariable String id, @Valid @RequestBody ResizeTerminalRequest request) {
+        sessionAppService.resizeTerminal(id, request.cols(), request.rows());
+        return ApiResponse.success();
+    }
+
     @GetMapping("/{id}/messages")
     public ApiResponse<PageResponse<MessageRecord>> messages(@PathVariable String id,
                                                              @RequestParam(defaultValue = "1") int pageNo,
                                                              @RequestParam(defaultValue = "50") int pageSize) {
         return ApiResponse.success(sessionAppService.messages(id, pageNo, pageSize));
+    }
+
+    @GetMapping("/{id}/raw-output")
+    public ApiResponse<String> rawOutput(@PathVariable String id) {
+        return ApiResponse.success(sessionAppService.rawOutput(id));
     }
 }
