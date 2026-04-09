@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: mutiAgent
+  profiles:
+    active: dev
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: Asia/Shanghai
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema/schema.sql
+
+server:
+  address: 127.0.0.1
+  port: 18109
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+    call-setters-on-nulls: true
+    jdbc-type-for-null: 'NULL'
+
+logging:
+  level:
+    com.aliano.mutiagent: INFO
+  file:
+    name: ${muti-agent.storage.base-dir}/logs/app/muti-agent.log
+
+muti-agent:
+  storage:
+    base-dir: ${LOCALAPPDATA:${user.home}}/mutiAgent
+    database-relative-path: data/muti-agent.db
+    session-log-relative-dir: logs/sessions
+    app-log-relative-dir: logs/app
+    runtime-relative-dir: runtime
+  runtime:
+    graceful-stop-wait-ms: 1500
