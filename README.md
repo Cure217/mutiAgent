@@ -1,7 +1,7 @@
 # mutiAgent
 
 <p align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0F172A,45:2563EB,100:14B8A6&height=240&section=header&text=mutiAgent&fontSize=54&fontColor=ffffff&desc=Local%20AI%20CLI%20Session%20Runtime%20Backend&descSize=18&descAlignY=62" alt="mutiAgent cover" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0F172A,45:2563EB,100:14B8A6&height=240&section=header&text=mutiAgent&fontSize=54&fontColor=ffffff&desc=Local%20AI%20CLI%20Session%20Runtime%20Backend&descSize=18&descAlignY=70" alt="mutiAgent cover" />
 </p>
 
 ![Java 17](https://img.shields.io/badge/Java-17-3874a6)
