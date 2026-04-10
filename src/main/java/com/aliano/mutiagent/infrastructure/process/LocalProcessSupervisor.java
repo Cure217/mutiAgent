@@ -66,7 +66,8 @@ public class LocalProcessSupervisor implements ProcessSupervisor {
         LaunchPlan launchPlan = context.adapter().buildLaunchPlan(context.instance(), context.session());
         Charset fallbackCharset = resolveFallbackCharset(context, launchPlan);
         boolean ttyEnabled = shouldUsePty(context);
-        Map<String, String> environment = new HashMap<>(launchPlan.environment());
+        Map<String, String> environment = new HashMap<>(System.getenv());
+        environment.putAll(launchPlan.environment());
         if (ttyEnabled) {
             environment.putIfAbsent("TERM", "xterm-256color");
         }
@@ -378,58 +379,70 @@ public class LocalProcessSupervisor implements ProcessSupervisor {
             if (bytes.length >= 2 && (bytes[0] & 0xFF) == 0xFE && (bytes[1] & 0xFF) == 0xFF) {
                 return StandardCharsets.UTF_16BE;
             }
-            if (looksLikeUtf16(bytes, true)) {
+            if (looksLikeUtf16WithNullPattern(bytes, true)) {
                 return StandardCharsets.UTF_16LE;
             }
-            if (looksLikeUtf16(bytes, false)) {
+            if (looksLikeUtf16WithNullPattern(bytes, false)) {
                 return StandardCharsets.UTF_16BE;
             }
             if (isValidUtf8(bytes)) {
                 return StandardCharsets.UTF_8;
             }
+            if (looksLikeUtf16Printable(bytes, true)) {
+                return StandardCharsets.UTF_16LE;
+            }
+            if (looksLikeUtf16Printable(bytes, false)) {
+                return StandardCharsets.UTF_16BE;
+            }
             return fallbackCharset;
         }
 
-        private boolean looksLikeUtf16(byte[] bytes, boolean littleEndian) {
+        private boolean looksLikeUtf16WithNullPattern(byte[] bytes, boolean littleEndian) {
             int pairCount = Math.min(bytes.length / 2, 128);
             if (pairCount < 8) {
                 return false;
             }
+            int highZeroCount = 0;
+            int lowZeroCount = 0;
+            for (int index = 0; index < pairCount * 2; index += 2) {
+                if (bytes[index] == 0) {
+                    highZeroCount++;
+                }
+                if (bytes[index + 1] == 0) {
+                    lowZeroCount++;
+                }
+            }
+            if (littleEndian) {
+                return lowZeroCount >= pairCount * 0.35 && lowZeroCount > highZeroCount * 2;
+            }
+            return highZeroCount >= pairCount * 0.35 && highZeroCount > lowZeroCount * 2;
+        }
 
-            int positive = 0;
-            int negative = 0;
+        private boolean looksLikeUtf16Printable(byte[] bytes, boolean littleEndian) {
+            int pairCount = Math.min(bytes.length / 2, 128);
+            if (pairCount < 8) {
+                return false;
+            }
+            int printable = 0;
+            int control = 0;
             for (int index = 0; index < pairCount * 2; index += 2) {
                 int value = littleEndian
                         ? (bytes[index] & 0xFF) | ((bytes[index + 1] & 0xFF) << 8)
                         : ((bytes[index] & 0xFF) << 8) | (bytes[index + 1] & 0xFF);
                 char ch = (char) value;
-                if (isLikelyText(ch)) {
-                    positive++;
-                } else {
-                    negative++;
+                if (Character.isISOControl(ch) && !Character.isWhitespace(ch)) {
+                    control++;
+                    continue;
+                }
+                if (Character.isWhitespace(ch)
+                        || Character.isLetterOrDigit(ch)
+                        || (ch >= 0x4E00 && ch <= 0x9FFF)
+                        || (ch >= 0x3000 && ch <= 0x303F)
+                        || (ch >= 0xFF00 && ch <= 0xFFEF)) {
+                    printable++;
                 }
             }
-            return positive >= pairCount * 0.7 && positive > negative * 2;
-        }
-
-        private boolean isLikelyText(char ch) {
-            if (Character.isWhitespace(ch)) {
-                return true;
-            }
-            if (Character.isLetterOrDigit(ch)) {
-                return true;
-            }
-            if (isCommonPunctuation(ch)) {
-                return true;
-            }
-            if (ch >= 0x4E00 && ch <= 0x9FFF) {
-                return true;
-            }
-            return !Character.isISOControl(ch);
-        }
-
-        private boolean isCommonPunctuation(char ch) {
-            return ",.;:'\"!?()[]{}<>-_=+/\\|@#$%^&*~`，。；：！？、（）【】《》“”‘’".indexOf(ch) >= 0;
+            return printable >= pairCount * 0.7 && control <= pairCount * 0.1;
         }
 
         private boolean isValidUtf8(byte[] bytes) {

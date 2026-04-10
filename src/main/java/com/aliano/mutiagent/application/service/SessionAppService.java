@@ -1,6 +1,7 @@
 package com.aliano.mutiagent.application.service;
 
 import com.aliano.mutiagent.application.dto.CreateSessionRequest;
+import com.aliano.mutiagent.application.dto.SessionTimelineItem;
 import com.aliano.mutiagent.common.exception.BusinessException;
 import com.aliano.mutiagent.common.model.PageResponse;
 import com.aliano.mutiagent.common.util.IdGenerator;
@@ -25,6 +26,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,6 +78,67 @@ public class SessionAppService {
         List<MessageRecord> items = messageMapper.findPage(sessionId, validPageSize, offset);
         long total = messageMapper.countBySessionId(sessionId);
         return new PageResponse<>(items, validPageNo, validPageSize, total);
+    }
+
+    public List<MessageRecord> messagesAround(String sessionId, String messageId, int before, int after) {
+        get(sessionId);
+        if (!StringUtils.hasText(messageId)) {
+            return List.of();
+        }
+        MessageRecord target = messageMapper.findById(sessionId, messageId);
+        if (target == null) {
+            throw new BusinessException("目标消息不存在");
+        }
+        return messageMapper.findWindowByMessageId(
+                sessionId,
+                messageId,
+                Math.max(before, 0),
+                Math.max(after, 0)
+        );
+    }
+
+    public List<SessionTimelineItem> timeline(String sessionId, int limit) {
+        AiSession session = get(sessionId);
+        int safeLimit = Math.min(Math.max(limit, 1), 500);
+        List<SessionTimelineItem> items = new ArrayList<>();
+        items.add(buildSessionEvent(
+                session,
+                "session-created",
+                "created",
+                "会话已创建",
+                firstNonBlank(session.getProjectPath(), session.getTitle()),
+                session.getCreatedAt()
+        ));
+        if (StringUtils.hasText(session.getStartedAt())) {
+            items.add(buildSessionEvent(
+                    session,
+                    "session-started",
+                    "started",
+                    "会话已启动",
+                    session.getPid() == null ? null : "PID: " + session.getPid(),
+                    session.getStartedAt()
+            ));
+        }
+
+        messageMapper.findLatestForTimeline(sessionId, safeLimit).stream()
+                .sorted(Comparator.comparing(MessageRecord::getSeqNo))
+                .map(this::buildMessageEvent)
+                .forEach(items::add);
+
+        if (StringUtils.hasText(session.getEndedAt())) {
+            items.add(buildSessionEvent(
+                    session,
+                    "session-ended",
+                    "ended",
+                    "会话已结束",
+                    firstNonBlank(session.getExitReason(), session.getStatus()),
+                    session.getEndedAt()
+            ));
+        }
+
+        return items.stream()
+                .sorted(Comparator.comparing(SessionTimelineItem::getCreatedAt, Comparator.nullsLast(String::compareTo)))
+                .toList();
     }
 
     public String rawOutput(String sessionId) {
@@ -157,7 +221,7 @@ public class SessionAppService {
     public void sendInput(String sessionId, String content, boolean appendNewLine, boolean recordInput) {
         AiSession session = get(sessionId);
         if (!SessionStatus.RUNNING.name().equals(session.getStatus())) {
-            throw new BusinessException("当前会话不可输入");
+            throw new BusinessException("当前会话状态为 " + session.getStatus() + "，不可输入");
         }
         try {
             processSupervisor.sendInput(sessionId, content, appendNewLine);
@@ -207,5 +271,47 @@ public class SessionAppService {
         } catch (JsonProcessingException exception) {
             throw new BusinessException("会话标签序列化失败", exception);
         }
+    }
+
+    private SessionTimelineItem buildSessionEvent(AiSession session,
+                                                  String itemId,
+                                                  String eventType,
+                                                  String title,
+                                                  String content,
+                                                  String createdAt) {
+        SessionTimelineItem item = new SessionTimelineItem();
+        item.setItemId(itemId);
+        item.setSessionId(session.getId());
+        item.setItemType("session-event");
+        item.setEventType(eventType);
+        item.setTitle(title);
+        item.setContent(content);
+        item.setCreatedAt(createdAt);
+        return item;
+    }
+
+    private SessionTimelineItem buildMessageEvent(MessageRecord message) {
+        SessionTimelineItem item = new SessionTimelineItem();
+        item.setItemId("message-" + message.getId());
+        item.setSessionId(message.getSessionId());
+        item.setMessageId(message.getId());
+        item.setSeqNo(message.getSeqNo());
+        item.setItemType("message");
+        item.setEventType("message");
+        item.setTitle("消息 #" + message.getSeqNo());
+        item.setRole(message.getRole());
+        item.setMessageType(message.getMessageType());
+        item.setContent(firstNonBlank(message.getContentText(), message.getRawChunk()));
+        item.setCreatedAt(message.getCreatedAt());
+        return item;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
     }
 }

@@ -3,6 +3,7 @@ package com.aliano.mutiagent.controller;
 import com.aliano.mutiagent.application.dto.CreateSessionRequest;
 import com.aliano.mutiagent.application.dto.ResizeTerminalRequest;
 import com.aliano.mutiagent.application.dto.SendInputRequest;
+import com.aliano.mutiagent.application.dto.SessionTimelineItem;
 import com.aliano.mutiagent.application.dto.StopSessionRequest;
 import com.aliano.mutiagent.application.service.SessionAppService;
 import com.aliano.mutiagent.common.model.ApiResponse;
@@ -86,8 +87,22 @@ public class SessionController {
         return ApiResponse.success(sessionAppService.messages(id, pageNo, pageSize));
     }
 
+    @GetMapping("/{id}/messages/around")
+    public ApiResponse<List<MessageRecord>> messagesAround(@PathVariable String id,
+                                                           @RequestParam String messageId,
+                                                           @RequestParam(defaultValue = "40") int before,
+                                                           @RequestParam(defaultValue = "40") int after) {
+        return ApiResponse.success(sessionAppService.messagesAround(id, messageId, before, after));
+    }
+
     @GetMapping("/{id}/raw-output")
     public ApiResponse<String> rawOutput(@PathVariable String id) {
         return ApiResponse.success(sessionAppService.rawOutput(id));
+    }
+
+    @GetMapping("/{id}/timeline")
+    public ApiResponse<List<SessionTimelineItem>> timeline(@PathVariable String id,
+                                                           @RequestParam(defaultValue = "200") int limit) {
+        return ApiResponse.success(sessionAppService.timeline(id, limit));
     }
 }

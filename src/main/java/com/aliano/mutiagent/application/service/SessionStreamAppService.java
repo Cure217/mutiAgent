@@ -58,11 +58,13 @@ public class SessionStreamAppService {
     public void handleProcessExit(String sessionId, int exitCode) {
         String now = OffsetDateTime.now().toString();
         String status = exitCode == 0 ? "COMPLETED" : "FAILED";
-        sessionMapper.updateStatus(sessionId, status, now, exitCode, "进程退出", now);
+        String exitReason = resolveExitReason(sessionId, exitCode);
+        sessionMapper.updateStatus(sessionId, status, now, exitCode, exitReason, now);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("status", status);
         payload.put("exitCode", exitCode);
+        payload.put("exitReason", exitReason);
         payload.put("endedAt", now);
         sessionEventPublisher.publish("session.closed", sessionId, payload);
     }
@@ -97,17 +99,40 @@ public class SessionStreamAppService {
             record.setSourceAdapter(sourceAdapter);
             record.setCreatedAt(now);
             messageMapper.insert(record);
+            messageMapper.syncFtsByMessageId(record.getId());
         }
 
         sessionMapper.touchLastMessage(sessionId, now, now);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("messageId", record.getId());
+        payload.put("seqNo", record.getSeqNo());
         payload.put("role", record.getRole());
         payload.put("messageType", record.getMessageType());
         payload.put("contentText", record.getContentText());
         payload.put("isStructured", record.getIsStructured());
         payload.put("createdAt", record.getCreatedAt());
         sessionEventPublisher.publish("session.message.created", sessionId, payload);
+    }
+
+    private String resolveExitReason(String sessionId, int exitCode) {
+        if (exitCode == 0) {
+            return "进程正常退出";
+        }
+        String text = messageMapper.findLatestForTimeline(sessionId, 5)
+                .stream()
+                .map(message -> (message.getContentText() == null ? "" : message.getContentText())
+                        + "\n"
+                        + (message.getRawChunk() == null ? "" : message.getRawChunk()))
+                .reduce("", (left, right) -> left + "\n" + right);
+        if (!org.springframework.util.StringUtils.hasText(text)) {
+            return "进程退出";
+        }
+        if (text.contains("wsl.exe [参数]")
+                || text.contains("适用于 Linux 的 Windows 子系统功能")
+                || text.contains("wsl --install")) {
+            return "WSL 未安装或未配置默认发行版，无法启动该会话";
+        }
+        return "进程退出";
     }
 }
