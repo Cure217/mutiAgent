@@ -28,15 +28,29 @@ public class HistoryController {
                                                    @RequestParam(required = false) String dateFrom,
                                                    @RequestParam(required = false) String dateTo,
                                                    @RequestParam(required = false) Integer sessionLimit,
-                                                   @RequestParam(required = false) Integer messageLimit) {
+                                                   @RequestParam(required = false) Integer messageLimit,
+                                                   @RequestParam(defaultValue = "1") Integer sessionPageNo,
+                                                   @RequestParam(required = false) Integer sessionPageSize,
+                                                   @RequestParam(required = false) String sessionSortBy,
+                                                   @RequestParam(required = false) String sessionSortDirection,
+                                                   @RequestParam(defaultValue = "1") Integer messagePageNo,
+                                                   @RequestParam(required = false) Integer messagePageSize,
+                                                   @RequestParam(required = false) String messageSortBy,
+                                                   @RequestParam(required = false) String messageSortDirection) {
         return ApiResponse.success(historyAppService.search(
                 keyword,
                 appType,
                 projectPath,
                 dateFrom,
                 dateTo,
-                sessionLimit,
-                messageLimit
+                sessionPageNo,
+                sessionPageSize == null ? sessionLimit : sessionPageSize,
+                sessionSortBy,
+                sessionSortDirection,
+                messagePageNo,
+                messagePageSize == null ? messageLimit : messagePageSize,
+                messageSortBy,
+                messageSortDirection
         ));
     }
 

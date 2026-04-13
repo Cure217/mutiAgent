@@ -34,8 +34,13 @@ public class GenericCliAdapter implements AIAdapter {
 
     @Override
     public LaunchPlan buildLaunchPlan(AppInstance instance, AiSession session) {
+        return buildLaunchPlan(instance, session, readList(instance.getArgsJson()));
+    }
+
+    protected LaunchPlan buildLaunchPlan(AppInstance instance, AiSession session, List<String> args) {
+        List<String> launchArgs = args == null ? Collections.emptyList() : args;
         if (shouldLaunchByWsl(instance)) {
-            return buildWslLaunchPlan(instance, session);
+            return buildWslLaunchPlan(instance, session, launchArgs);
         }
         List<String> command = new ArrayList<>();
         if (StringUtils.hasText(instance.getExecutablePath())) {
@@ -46,7 +51,7 @@ public class GenericCliAdapter implements AIAdapter {
                 command.add(instance.getLaunchCommand());
             }
         }
-        command.addAll(readList(instance.getArgsJson()));
+        command.addAll(launchArgs);
         if (command.isEmpty()) {
             throw new IllegalArgumentException("未配置有效的启动命令");
         }
@@ -120,7 +125,7 @@ public class GenericCliAdapter implements AIAdapter {
         return normalized.strip();
     }
 
-    private LaunchPlan buildWslLaunchPlan(AppInstance instance, AiSession session) {
+    private LaunchPlan buildWslLaunchPlan(AppInstance instance, AiSession session, List<String> args) {
         List<String> command = new ArrayList<>();
         command.add(StringUtils.hasText(instance.getExecutablePath()) ? instance.getExecutablePath() : "wsl.exe");
 
@@ -132,7 +137,7 @@ public class GenericCliAdapter implements AIAdapter {
 
         command.add("--exec");
         command.add(instance.getLaunchCommand());
-        command.addAll(readList(instance.getArgsJson()));
+        command.addAll(args);
 
         String windowsWorkingDirectory = StringUtils.hasText(session.getProjectPath()) ? session.getProjectPath() : instance.getWorkdir();
         return new LaunchPlan(command, readMap(instance.getEnvJson()), windowsWorkingDirectory);

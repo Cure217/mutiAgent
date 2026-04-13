@@ -91,6 +91,9 @@ CREATE TABLE IF NOT EXISTS operation_log (
     created_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_operation_log_target
+    ON operation_log (target_type, target_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS config (
     id TEXT PRIMARY KEY,
     config_group TEXT NOT NULL,

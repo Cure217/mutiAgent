@@ -16,6 +16,10 @@ import org.springframework.util.StringUtils;
 @Component
 public class CodexAdapter extends GenericCliAdapter {
 
+    private static final String YOLO_FLAG = "--dangerously-bypass-approvals-and-sandbox";
+    private static final String FULL_AUTO_FLAG = "--full-auto";
+    private static final String ASK_FOR_APPROVAL_SHORT_FLAG = "-a";
+    private static final String ASK_FOR_APPROVAL_LONG_FLAG = "--ask-for-approval";
     private static final Pattern PROMPT_ONLY = Pattern.compile("^[>›]+$");
     private static final Pattern CONTEXT_LINE = Pattern.compile("^\\d+%\\s+context\\s+left$", Pattern.CASE_INSENSITIVE);
     private static final Pattern SPINNER_LINE = Pattern.compile("^[⠁-⣿]+\\s+.*$");
@@ -60,8 +64,9 @@ public class CodexAdapter extends GenericCliAdapter {
 
     @Override
     public LaunchPlan buildLaunchPlan(AppInstance instance, AiSession session) {
+        List<String> launchArgs = resolveCodexArgs(instance);
         if (!"windows".equalsIgnoreCase(instance.getRuntimeEnv())) {
-            return super.buildLaunchPlan(instance, session);
+            return super.buildLaunchPlan(instance, session, launchArgs);
         }
 
         Path wrapperPath = resolveCodexWrapper(instance);
@@ -74,15 +79,47 @@ public class CodexAdapter extends GenericCliAdapter {
                 .resolve("codex.js");
 
         if (wrapperPath == null || nodePath == null || scriptPath == null || !Files.exists(scriptPath)) {
-            return super.buildLaunchPlan(instance, session);
+            return super.buildLaunchPlan(instance, session, launchArgs);
         }
 
         List<String> command = new ArrayList<>();
         command.add(nodePath.toString());
         command.add(scriptPath.toString());
-        command.addAll(readList(instance.getArgsJson()));
+        command.addAll(launchArgs);
         String workingDirectory = StringUtils.hasText(session.getProjectPath()) ? session.getProjectPath() : instance.getWorkdir();
         return new LaunchPlan(command, readMap(instance.getEnvJson()), workingDirectory);
+    }
+
+    private List<String> resolveCodexArgs(AppInstance instance) {
+        List<String> args = new ArrayList<>();
+        for (String arg : readList(instance.getArgsJson())) {
+            if (StringUtils.hasText(arg)) {
+                args.add(arg.trim());
+            }
+        }
+        if (hasExplicitApprovalConfiguration(args)) {
+            return args;
+        }
+        args.add(YOLO_FLAG);
+        return args;
+    }
+
+    private boolean hasExplicitApprovalConfiguration(List<String> args) {
+        for (String arg : args) {
+            if (!StringUtils.hasText(arg)) {
+                continue;
+            }
+            String normalized = arg.trim();
+            if (YOLO_FLAG.equals(normalized)
+                    || FULL_AUTO_FLAG.equals(normalized)
+                    || ASK_FOR_APPROVAL_SHORT_FLAG.equals(normalized)
+                    || ASK_FOR_APPROVAL_LONG_FLAG.equals(normalized)
+                    || normalized.startsWith(ASK_FOR_APPROVAL_SHORT_FLAG + "=")
+                    || normalized.startsWith(ASK_FOR_APPROVAL_LONG_FLAG + "=")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Path resolveCodexWrapper(AppInstance instance) {

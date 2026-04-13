@@ -4,7 +4,9 @@ import com.aliano.mutiagent.application.dto.CreateSessionRequest;
 import com.aliano.mutiagent.application.dto.ResizeTerminalRequest;
 import com.aliano.mutiagent.application.dto.SendInputRequest;
 import com.aliano.mutiagent.application.dto.SessionTimelineItem;
+import com.aliano.mutiagent.application.dto.SessionWorkspaceMeta;
 import com.aliano.mutiagent.application.dto.StopSessionRequest;
+import com.aliano.mutiagent.application.dto.UpdateSessionWorkspaceRequest;
 import com.aliano.mutiagent.application.service.SessionAppService;
 import com.aliano.mutiagent.common.model.ApiResponse;
 import com.aliano.mutiagent.common.model.PageResponse;
@@ -104,5 +106,16 @@ public class SessionController {
     public ApiResponse<List<SessionTimelineItem>> timeline(@PathVariable String id,
                                                            @RequestParam(defaultValue = "200") int limit) {
         return ApiResponse.success(sessionAppService.timeline(id, limit));
+    }
+
+    @GetMapping("/{id}/workspace-meta")
+    public ApiResponse<SessionWorkspaceMeta> workspaceMeta(@PathVariable String id) {
+        return ApiResponse.success(sessionAppService.getWorkspaceMeta(id));
+    }
+
+    @PostMapping("/{id}/workspace-meta")
+    public ApiResponse<SessionWorkspaceMeta> updateWorkspaceMeta(@PathVariable String id,
+                                                                 @RequestBody UpdateSessionWorkspaceRequest request) {
+        return ApiResponse.success(sessionAppService.updateWorkspaceMeta(id, request));
     }
 }

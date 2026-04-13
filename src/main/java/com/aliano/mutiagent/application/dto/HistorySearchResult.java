@@ -1,11 +1,11 @@
 package com.aliano.mutiagent.application.dto;
 
-import java.util.List;
+import com.aliano.mutiagent.common.model.PageResponse;
 import lombok.Data;
 
 @Data
 public class HistorySearchResult {
 
-    private List<HistorySearchSessionHit> sessions;
-    private List<HistorySearchMessageHit> messages;
+    private PageResponse<HistorySearchSessionHit> sessions;
+    private PageResponse<HistorySearchMessageHit> messages;
 }

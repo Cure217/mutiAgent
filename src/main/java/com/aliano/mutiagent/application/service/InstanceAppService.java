@@ -32,6 +32,11 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class InstanceAppService {
 
+    private static final String CODEX_YOLO_FLAG = "--dangerously-bypass-approvals-and-sandbox";
+    private static final String CODEX_FULL_AUTO_FLAG = "--full-auto";
+    private static final String CODEX_ASK_FOR_APPROVAL_SHORT_FLAG = "-a";
+    private static final String CODEX_ASK_FOR_APPROVAL_LONG_FLAG = "--ask-for-approval";
+
     private final AppInstanceMapper appInstanceMapper;
     private final AdapterRegistry adapterRegistry;
     private final IdGenerator idGenerator;
@@ -52,17 +57,18 @@ public class InstanceAppService {
 
     public AppInstance create(CreateInstanceRequest request) {
         String now = OffsetDateTime.now().toString();
+        String adapterType = StringUtils.hasText(request.adapterType()) ? request.adapterType() : "generic-cli";
         AppInstance instance = new AppInstance();
         instance.setId(idGenerator.next("ins"));
         instance.setCode(buildCode(request.name()));
         instance.setName(request.name());
         instance.setAppType(request.appType());
-        instance.setAdapterType(StringUtils.hasText(request.adapterType()) ? request.adapterType() : "generic-cli");
+        instance.setAdapterType(adapterType);
         instance.setRuntimeEnv(request.runtimeEnv());
         instance.setLaunchMode(request.launchMode());
         instance.setExecutablePath(request.executablePath());
         instance.setLaunchCommand(request.launchCommand());
-        instance.setArgsJson(writeJson(request.args()));
+        instance.setArgsJson(writeJson(normalizeArgs(request.appType(), adapterType, request.launchCommand(), request.args())));
         instance.setWorkdir(request.workdir());
         instance.setEnvJson(writeJson(request.env()));
         instance.setEnabled(request.enabled() == null || request.enabled());
@@ -76,14 +82,15 @@ public class InstanceAppService {
 
     public AppInstance update(String id, UpdateInstanceRequest request) {
         AppInstance instance = get(id);
+        String adapterType = StringUtils.hasText(request.adapterType()) ? request.adapterType() : instance.getAdapterType();
         instance.setName(request.name());
         instance.setAppType(request.appType());
-        instance.setAdapterType(StringUtils.hasText(request.adapterType()) ? request.adapterType() : instance.getAdapterType());
+        instance.setAdapterType(adapterType);
         instance.setRuntimeEnv(request.runtimeEnv());
         instance.setLaunchMode(request.launchMode());
         instance.setExecutablePath(request.executablePath());
         instance.setLaunchCommand(request.launchCommand());
-        instance.setArgsJson(writeJson(request.args()));
+        instance.setArgsJson(writeJson(normalizeArgs(request.appType(), adapterType, request.launchCommand(), request.args())));
         instance.setWorkdir(request.workdir());
         instance.setEnvJson(writeJson(request.env()));
         instance.setEnabled(request.enabled() == null ? instance.getEnabled() : request.enabled());
@@ -138,6 +145,57 @@ public class InstanceAppService {
             normalized = "instance";
         }
         return normalized + "-" + idGenerator.next("code").substring(5);
+    }
+
+    private List<String> normalizeArgs(String appType, String adapterType, String launchCommand, List<String> args) {
+        List<String> normalized = args == null ? null : new ArrayList<>();
+        if (args != null) {
+            for (String arg : args) {
+                if (StringUtils.hasText(arg)) {
+                    normalized.add(arg.trim());
+                }
+            }
+        }
+
+        if (!isCodexInstance(appType, adapterType, launchCommand)) {
+            return normalized;
+        }
+
+        List<String> codexArgs = normalized == null ? new ArrayList<>() : normalized;
+        if (hasExplicitCodexApprovalArg(codexArgs)) {
+            return codexArgs;
+        }
+        codexArgs.add(CODEX_YOLO_FLAG);
+        return codexArgs;
+    }
+
+    private boolean isCodexInstance(String appType, String adapterType, String launchCommand) {
+        if ("codex".equalsIgnoreCase(appType) || "codex-cli".equalsIgnoreCase(adapterType)) {
+            return true;
+        }
+        if (!StringUtils.hasText(launchCommand)) {
+            return false;
+        }
+        String normalizedCommand = launchCommand.trim().toLowerCase(Locale.ROOT);
+        return "codex".equals(normalizedCommand) || "codex.cmd".equals(normalizedCommand);
+    }
+
+    private boolean hasExplicitCodexApprovalArg(List<String> args) {
+        for (String arg : args) {
+            if (!StringUtils.hasText(arg)) {
+                continue;
+            }
+            String normalized = arg.trim();
+            if (CODEX_YOLO_FLAG.equals(normalized)
+                    || CODEX_FULL_AUTO_FLAG.equals(normalized)
+                    || CODEX_ASK_FOR_APPROVAL_SHORT_FLAG.equals(normalized)
+                    || CODEX_ASK_FOR_APPROVAL_LONG_FLAG.equals(normalized)
+                    || normalized.startsWith(CODEX_ASK_FOR_APPROVAL_SHORT_FLAG + "=")
+                    || normalized.startsWith(CODEX_ASK_FOR_APPROVAL_LONG_FLAG + "=")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String writeJson(Object value) {

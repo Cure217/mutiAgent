@@ -2,6 +2,8 @@ package com.aliano.mutiagent.application.service;
 
 import com.aliano.mutiagent.application.dto.CreateSessionRequest;
 import com.aliano.mutiagent.application.dto.SessionTimelineItem;
+import com.aliano.mutiagent.application.dto.SessionWorkspaceMeta;
+import com.aliano.mutiagent.application.dto.UpdateSessionWorkspaceRequest;
 import com.aliano.mutiagent.common.exception.BusinessException;
 import com.aliano.mutiagent.common.model.PageResponse;
 import com.aliano.mutiagent.common.util.IdGenerator;
@@ -28,10 +30,12 @@ import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -157,6 +161,10 @@ public class SessionAppService {
         }
     }
 
+    public SessionWorkspaceMeta getWorkspaceMeta(String sessionId) {
+        return readWorkspaceMeta(get(sessionId));
+    }
+
     public AiSession createAndStart(CreateSessionRequest request) {
         AppInstance instance = appInstanceMapper.findById(request.appInstanceId());
         if (instance == null) {
@@ -174,7 +182,10 @@ public class SessionAppService {
         session.setProjectPath(request.projectPath());
         session.setStatus(SessionStatus.STARTING.name());
         session.setInteractionMode(resolveInteractionMode(request.interactionMode()));
-        session.setTagsJson(writeJson(request.tags()));
+        SessionWorkspaceMeta workspaceMeta = normalizeWorkspaceMeta(request.workspaceMeta(), null, request.tags(), now);
+        session.setTagsJson(writeJson(buildWorkspaceTags(request.tags(), workspaceMeta)));
+        session.setExtraJson(writeJson(workspaceMeta));
+        session.setSummary(firstNonBlank(workspaceMeta.getProgressSummary(), workspaceMeta.getBlockedReason()));
         session.setCreatedAt(now);
         session.setUpdatedAt(now);
         sessionMapper.insert(session);
@@ -216,6 +227,36 @@ public class SessionAppService {
             sessionEventPublisher.publish("session.error", session.getId(), payload);
             throw new BusinessException("启动会话失败: " + exception.getMessage(), exception);
         }
+    }
+
+    public SessionWorkspaceMeta updateWorkspaceMeta(String sessionId, UpdateSessionWorkspaceRequest request) {
+        AiSession session = get(sessionId);
+        SessionWorkspaceMeta current = readWorkspaceMeta(session);
+        SessionWorkspaceMeta patch = new SessionWorkspaceMeta();
+        patch.setWorkspaceKind(request.workspaceKind());
+        patch.setRole(request.role());
+        patch.setCoordinationStatus(request.coordinationStatus());
+        patch.setProgressSummary(trimToNull(request.progressSummary()));
+        patch.setBlockedReason(trimToNull(request.blockedReason()));
+        patch.setSharedContextSummary(trimToNull(request.sharedContextSummary()));
+        if (request.dependencySessionIds() != null) {
+            patch.setDependencySessionIds(request.dependencySessionIds());
+        }
+
+        String now = OffsetDateTime.now().toString();
+        SessionWorkspaceMeta merged = normalizeWorkspaceMeta(patch, current, parseTags(session.getTagsJson()), now);
+        String tagsJson = writeJson(buildWorkspaceTags(parseTags(session.getTagsJson()), merged));
+        String extraJson = writeJson(merged);
+        String summary = firstNonBlank(merged.getProgressSummary(), merged.getBlockedReason(), session.getSummary());
+        sessionMapper.updateWorkspaceMetadata(sessionId, summary, tagsJson, extraJson, now);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("tagsJson", tagsJson);
+        payload.put("extraJson", extraJson);
+        payload.put("workspaceMeta", merged);
+        sessionEventPublisher.publish("session.workspace.updated", sessionId, payload);
+        return merged;
     }
 
     public void sendInput(String sessionId, String content, boolean appendNewLine, boolean recordInput) {
@@ -262,6 +303,135 @@ public class SessionAppService {
         return interactionMode.toUpperCase();
     }
 
+    private SessionWorkspaceMeta readWorkspaceMeta(AiSession session) {
+        SessionWorkspaceMeta current = readJson(session.getExtraJson(), new ParameterizedTypeReference<>() {
+        });
+        return normalizeWorkspaceMeta(current, null, parseTags(session.getTagsJson()), session.getUpdatedAt());
+    }
+
+    private SessionWorkspaceMeta normalizeWorkspaceMeta(SessionWorkspaceMeta incoming,
+                                                        SessionWorkspaceMeta current,
+                                                        List<String> tags,
+                                                        String updatedAt) {
+        List<String> safeTags = tags == null ? List.of() : tags;
+        SessionWorkspaceMeta meta = new SessionWorkspaceMeta();
+        meta.setWorkspaceKind(firstNonBlank(
+                trimToNull(incoming == null ? null : incoming.getWorkspaceKind()),
+                trimToNull(current == null ? null : current.getWorkspaceKind()),
+                safeTags.contains("workspace:child") ? "child" : null,
+                "standard"
+        ));
+        meta.setRole(firstNonBlank(
+                trimToNull(incoming == null ? null : incoming.getRole()),
+                trimToNull(current == null ? null : current.getRole()),
+                extractTagValue(safeTags, "role:"),
+                "general"
+        ));
+        meta.setCoordinationStatus(firstNonBlank(
+                trimToNull(incoming == null ? null : incoming.getCoordinationStatus()),
+                trimToNull(current == null ? null : current.getCoordinationStatus()),
+                extractTagValue(safeTags, "coordination:"),
+                "assigned"
+        ));
+        meta.setProgressSummary(firstNonBlank(
+                trimToNull(incoming == null ? null : incoming.getProgressSummary()),
+                trimToNull(current == null ? null : current.getProgressSummary())
+        ));
+        meta.setBlockedReason(firstNonBlank(
+                trimToNull(incoming == null ? null : incoming.getBlockedReason()),
+                trimToNull(current == null ? null : current.getBlockedReason())
+        ));
+        meta.setSharedContextSummary(firstNonBlank(
+                trimToNull(incoming == null ? null : incoming.getSharedContextSummary()),
+                trimToNull(current == null ? null : current.getSharedContextSummary())
+        ));
+        meta.setDependencySessionIds(resolveDependencyIds(incoming, current, safeTags));
+        meta.setUpdatedAt(firstNonBlank(
+                trimToNull(incoming == null ? null : incoming.getUpdatedAt()),
+                trimToNull(updatedAt),
+                OffsetDateTime.now().toString()
+        ));
+        return meta;
+    }
+
+    private List<String> resolveDependencyIds(SessionWorkspaceMeta incoming,
+                                              SessionWorkspaceMeta current,
+                                              List<String> tags) {
+        if (incoming != null && incoming.getDependencySessionIds() != null) {
+            return incoming.getDependencySessionIds().stream()
+                    .map(this::trimToNull)
+                    .filter(StringUtils::hasText)
+                    .distinct()
+                    .toList();
+        }
+        if (current != null && current.getDependencySessionIds() != null && !current.getDependencySessionIds().isEmpty()) {
+            return current.getDependencySessionIds().stream()
+                    .map(this::trimToNull)
+                    .filter(StringUtils::hasText)
+                    .distinct()
+                    .toList();
+        }
+        return tags.stream()
+                .filter(tag -> tag.startsWith("depends:"))
+                .map(tag -> trimToNull(tag.substring("depends:".length())))
+                .filter(StringUtils::hasText)
+                .distinct()
+                .toList();
+    }
+
+    private List<String> buildWorkspaceTags(List<String> originalTags, SessionWorkspaceMeta workspaceMeta) {
+        LinkedHashSet<String> tags = new LinkedHashSet<>();
+        List<String> safeOriginalTags = originalTags == null ? List.of() : originalTags;
+        safeOriginalTags.stream()
+                .map(this::trimToNull)
+                .filter(StringUtils::hasText)
+                .filter(tag -> !tag.startsWith("workspace:"))
+                .filter(tag -> !tag.startsWith("role:"))
+                .filter(tag -> !tag.startsWith("depends:"))
+                .filter(tag -> !tag.startsWith("coordination:"))
+                .forEach(tags::add);
+
+        if ("child".equalsIgnoreCase(workspaceMeta.getWorkspaceKind())) {
+            tags.add("workspace:child");
+        }
+        if (StringUtils.hasText(workspaceMeta.getRole())) {
+            tags.add("role:" + workspaceMeta.getRole());
+        }
+        if (StringUtils.hasText(workspaceMeta.getCoordinationStatus())) {
+            tags.add("coordination:" + workspaceMeta.getCoordinationStatus());
+        }
+        if (workspaceMeta.getDependencySessionIds() != null) {
+            workspaceMeta.getDependencySessionIds().stream()
+                    .map(this::trimToNull)
+                    .filter(StringUtils::hasText)
+                    .forEach(dependencyId -> tags.add("depends:" + dependencyId));
+        }
+        return List.copyOf(tags);
+    }
+
+    private List<String> parseTags(String tagsJson) {
+        if (!StringUtils.hasText(tagsJson)) {
+            return List.of();
+        }
+        List<String> tags = readJson(tagsJson, new ParameterizedTypeReference<>() {
+        });
+        if (tags == null) {
+            return List.of();
+        }
+        return tags.stream()
+                .map(this::trimToNull)
+                .filter(StringUtils::hasText)
+                .toList();
+    }
+
+    private String extractTagValue(List<String> tags, String prefix) {
+        return tags.stream()
+                .filter(tag -> tag.startsWith(prefix))
+                .findFirst()
+                .map(tag -> trimToNull(tag.substring(prefix.length())))
+                .orElse(null);
+    }
+
     private String writeJson(Object value) {
         if (value == null) {
             return null;
@@ -271,6 +441,24 @@ public class SessionAppService {
         } catch (JsonProcessingException exception) {
             throw new BusinessException("会话标签序列化失败", exception);
         }
+    }
+
+    private <T> T readJson(String value, ParameterizedTypeReference<T> typeReference) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(value, objectMapper.getTypeFactory().constructType(typeReference.getType()));
+        } catch (JsonProcessingException exception) {
+            return null;
+        }
+    }
+
+    private String trimToNull(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return value.trim();
     }
 
     private SessionTimelineItem buildSessionEvent(AiSession session,

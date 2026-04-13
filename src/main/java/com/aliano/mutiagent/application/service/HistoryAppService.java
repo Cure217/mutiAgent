@@ -3,6 +3,7 @@ package com.aliano.mutiagent.application.service;
 import com.aliano.mutiagent.application.dto.HistorySearchMessageHit;
 import com.aliano.mutiagent.application.dto.HistorySearchResult;
 import com.aliano.mutiagent.application.dto.HistorySearchSessionHit;
+import com.aliano.mutiagent.common.model.PageResponse;
 import com.aliano.mutiagent.infrastructure.persistence.mapper.HistoryMapper;
 import java.util.Collections;
 import java.util.List;
@@ -24,58 +25,102 @@ public class HistoryAppService {
                                       String projectPath,
                                       String dateFrom,
                                       String dateTo,
-                                      Integer sessionLimit,
-                                      Integer messageLimit) {
+                                      Integer sessionPageNo,
+                                      Integer sessionPageSize,
+                                      String sessionSortBy,
+                                      String sessionSortDirection,
+                                      Integer messagePageNo,
+                                      Integer messagePageSize,
+                                      String messageSortBy,
+                                      String messageSortDirection) {
         String normalizedKeyword = normalize(keyword);
         String normalizedAppType = normalize(appType);
         String normalizedProjectPath = normalize(projectPath);
         String normalizedDateFrom = normalize(dateFrom);
         String normalizedDateTo = normalize(dateTo);
-        int safeSessionLimit = normalizeLimit(sessionLimit, 20);
-        int safeMessageLimit = normalizeLimit(messageLimit, 20);
-
-        List<HistorySearchSessionHit> sessionHits = historyMapper.searchSessionHits(
+        int validSessionPageNo = normalizePageNo(sessionPageNo);
+        int validMessagePageNo = normalizePageNo(messagePageNo);
+        int safeSessionPageSize = normalizePageSize(sessionPageSize, 20);
+        int safeMessagePageSize = normalizePageSize(messagePageSize, 20);
+        int sessionOffset = (validSessionPageNo - 1) * safeSessionPageSize;
+        int messageOffset = (validMessagePageNo - 1) * safeMessagePageSize;
+        long sessionTotal = historyMapper.countSessionHits(
                 normalizedKeyword,
                 normalizedAppType,
                 normalizedProjectPath,
                 normalizedDateFrom,
-                normalizedDateTo,
-                safeSessionLimit
+                normalizedDateTo
         );
-        sessionHits.forEach(hit -> {
-            hit.setMatchedSource(resolveMatchedSource(hit, normalizedKeyword));
-            hit.setMatchedText(resolveMatchedText(hit, normalizedKeyword));
-        });
-
-        List<HistorySearchMessageHit> messageHits = Collections.emptyList();
-        if (StringUtils.hasText(normalizedKeyword)) {
-            historyMapper.syncMessageFts();
-            String ftsKeyword = buildFtsKeyword(normalizedKeyword);
-            try {
-                messageHits = historyMapper.searchMessageHitsByFts(
-                        ftsKeyword,
-                        normalizedAppType,
-                        normalizedProjectPath,
-                        normalizedDateFrom,
-                        normalizedDateTo,
-                        safeMessageLimit
-                );
-            } catch (DataAccessException exception) {
-                messageHits = historyMapper.searchMessageHitsByLike(
+        List<HistorySearchSessionHit> sessionHits = sessionTotal == 0
+                ? Collections.emptyList()
+                : historyMapper.searchSessionHits(
                         normalizedKeyword,
                         normalizedAppType,
                         normalizedProjectPath,
                         normalizedDateFrom,
                         normalizedDateTo,
-                        safeMessageLimit
+                        resolveSessionOrderBy(sessionSortBy, sessionSortDirection),
+                        safeSessionPageSize,
+                        sessionOffset
                 );
+
+        sessionHits.forEach(hit -> {
+            hit.setMatchedSource(resolveMatchedSource(hit, normalizedKeyword));
+            hit.setMatchedText(resolveMatchedText(hit, normalizedKeyword));
+        });
+
+        long messageTotal = 0;
+        List<HistorySearchMessageHit> messageHits = Collections.emptyList();
+        if (StringUtils.hasText(normalizedKeyword)) {
+            historyMapper.syncMessageFts();
+            String ftsKeyword = buildFtsKeyword(normalizedKeyword);
+            try {
+                messageTotal = historyMapper.countMessageHitsByFts(
+                        ftsKeyword,
+                        normalizedAppType,
+                        normalizedProjectPath,
+                        normalizedDateFrom,
+                        normalizedDateTo
+                );
+                messageHits = messageTotal == 0
+                        ? Collections.emptyList()
+                        : historyMapper.searchMessageHitsByFts(
+                                ftsKeyword,
+                                normalizedAppType,
+                                normalizedProjectPath,
+                                normalizedDateFrom,
+                                normalizedDateTo,
+                                resolveMessageOrderBy(messageSortBy, messageSortDirection, true),
+                                safeMessagePageSize,
+                                messageOffset
+                        );
+            } catch (DataAccessException exception) {
+                messageTotal = historyMapper.countMessageHitsByLike(
+                        normalizedKeyword,
+                        normalizedAppType,
+                        normalizedProjectPath,
+                        normalizedDateFrom,
+                        normalizedDateTo
+                );
+                messageHits = messageTotal == 0
+                        ? Collections.emptyList()
+                        : historyMapper.searchMessageHitsByLike(
+                                normalizedKeyword,
+                                normalizedAppType,
+                                normalizedProjectPath,
+                                normalizedDateFrom,
+                                normalizedDateTo,
+                                resolveMessageOrderBy(messageSortBy, messageSortDirection, false),
+                                safeMessagePageSize,
+                                messageOffset
+                        );
             }
-            messageHits.forEach(hit -> hit.setSnippet(clipText(hit.getSnippet(), 200)));
+            messageHits.forEach(hit -> hit.setSnippet(clipTextAroundKeyword(hit.getSnippet(), normalizedKeyword, 200)));
         }
 
         HistorySearchResult result = new HistorySearchResult();
-        result.setSessions(sessionHits);
-        result.setMessages(messageHits);
+        result.setSessions(new PageResponse<>(sessionHits, validSessionPageNo, safeSessionPageSize, sessionTotal));
+        result.setMessages(new PageResponse<>(messageHits, validMessagePageNo, safeMessagePageSize, messageTotal));
         return result;
     }
 
@@ -103,15 +148,15 @@ public class HistoryAppService {
             return clipText(firstNonBlank(hit.getSummary(), hit.getProjectPath(), hit.getTitle()), 160);
         }
         if (contains(hit.getTitle(), keyword)) {
-            return clipText(hit.getTitle(), 160);
+            return clipTextAroundKeyword(hit.getTitle(), keyword, 160);
         }
         if (contains(hit.getProjectPath(), keyword)) {
-            return clipText(hit.getProjectPath(), 160);
+            return clipTextAroundKeyword(hit.getProjectPath(), keyword, 160);
         }
         if (contains(hit.getSummary(), keyword)) {
-            return clipText(hit.getSummary(), 160);
+            return clipTextAroundKeyword(hit.getSummary(), keyword, 160);
         }
-        return clipText(hit.getMatchedMessageText(), 160);
+        return clipTextAroundKeyword(hit.getMatchedMessageText(), keyword, 160);
     }
 
     private String buildFtsKeyword(String keyword) {
@@ -123,11 +168,18 @@ public class HistoryAppService {
                 .collect(Collectors.joining(" AND "));
     }
 
-    private int normalizeLimit(Integer limit, int defaultValue) {
-        if (limit == null) {
+    private int normalizePageNo(Integer pageNo) {
+        if (pageNo == null) {
+            return 1;
+        }
+        return Math.max(pageNo, 1);
+    }
+
+    private int normalizePageSize(Integer pageSize, int defaultValue) {
+        if (pageSize == null) {
             return defaultValue;
         }
-        return Math.min(Math.max(limit, 1), 100);
+        return Math.min(Math.max(pageSize, 1), 100);
     }
 
     private String normalize(String value) {
@@ -140,6 +192,42 @@ public class HistoryAppService {
                 && source.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT));
     }
 
+    private String resolveSessionOrderBy(String sortBy, String sortDirection) {
+        String direction = normalizeDirection(sortDirection, "desc");
+        String normalizedSortBy = normalize(sortBy);
+        if (!StringUtils.hasText(normalizedSortBy) || "lastMessageAt".equalsIgnoreCase(normalizedSortBy)) {
+            return "COALESCE(s.last_message_at, s.created_at) " + direction + ", s.created_at DESC";
+        }
+        if ("createdAt".equalsIgnoreCase(normalizedSortBy)) {
+            return "s.created_at " + direction + ", COALESCE(s.last_message_at, s.created_at) DESC";
+        }
+        if ("title".equalsIgnoreCase(normalizedSortBy)) {
+            return "s.title " + direction + ", COALESCE(s.last_message_at, s.created_at) DESC";
+        }
+        return "COALESCE(s.last_message_at, s.created_at) DESC, s.created_at DESC";
+    }
+
+    private String resolveMessageOrderBy(String sortBy, String sortDirection, boolean relevanceAvailable) {
+        String normalizedSortBy = normalize(sortBy);
+        if (relevanceAvailable && (!StringUtils.hasText(normalizedSortBy) || "relevance".equalsIgnoreCase(normalizedSortBy))) {
+            return "bm25(message_fts) ASC, m.created_at DESC";
+        }
+
+        String direction = normalizeDirection(sortDirection, "desc");
+        if ("seqNo".equalsIgnoreCase(normalizedSortBy)) {
+            return "m.seq_no " + direction + ", m.created_at " + direction;
+        }
+        return "m.created_at " + direction + ", m.seq_no " + direction;
+    }
+
+    private String normalizeDirection(String value, String defaultValue) {
+        String normalized = normalize(value);
+        if (!StringUtils.hasText(normalized)) {
+            return defaultValue.toUpperCase(Locale.ROOT);
+        }
+        return "asc".equalsIgnoreCase(normalized) ? "ASC" : "DESC";
+    }
+
     private String clipText(String text, int maxLength) {
         if (!StringUtils.hasText(text)) {
             return text;
@@ -148,6 +236,37 @@ public class HistoryAppService {
             return text;
         }
         return text.substring(0, maxLength) + "...";
+    }
+
+    private String clipTextAroundKeyword(String text, String keyword, int maxLength) {
+        if (!StringUtils.hasText(text)) {
+            return text;
+        }
+        if (!StringUtils.hasText(keyword)) {
+            return clipText(text, maxLength);
+        }
+
+        String normalizedSource = text.toLowerCase(Locale.ROOT);
+        String normalizedKeyword = keyword.toLowerCase(Locale.ROOT);
+        int matchIndex = normalizedSource.indexOf(normalizedKeyword);
+        if (matchIndex < 0) {
+            return clipText(text, maxLength);
+        }
+        if (text.length() <= maxLength) {
+            return text;
+        }
+
+        int keywordLength = keyword.length();
+        int halfWindow = Math.max((maxLength - keywordLength) / 2, 0);
+        int start = Math.max(matchIndex - halfWindow, 0);
+        int end = Math.min(start + maxLength, text.length());
+        if (end - start < maxLength) {
+            start = Math.max(end - maxLength, 0);
+        }
+
+        String prefix = start > 0 ? "..." : "";
+        String suffix = end < text.length() ? "..." : "";
+        return prefix + text.substring(start, end) + suffix;
     }
 
     private String firstNonBlank(String... values) {

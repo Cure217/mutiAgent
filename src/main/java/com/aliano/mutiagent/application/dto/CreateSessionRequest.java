@@ -9,5 +9,6 @@ public record CreateSessionRequest(
         String projectPath,
         String interactionMode,
         String initInput,
-        List<String> tags) {
+        List<String> tags,
+        SessionWorkspaceMeta workspaceMeta) {
 }

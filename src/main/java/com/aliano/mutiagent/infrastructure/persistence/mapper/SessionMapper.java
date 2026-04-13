@@ -102,6 +102,20 @@ public interface SessionMapper {
                          @Param("lastMessageAt") String lastMessageAt,
                          @Param("updatedAt") String updatedAt);
 
+    @Update("""
+            UPDATE session
+            SET summary = #{summary},
+                tags_json = #{tagsJson},
+                extra_json = #{extraJson},
+                updated_at = #{updatedAt}
+            WHERE id = #{id}
+            """)
+    int updateWorkspaceMetadata(@Param("id") String id,
+                                @Param("summary") String summary,
+                                @Param("tagsJson") String tagsJson,
+                                @Param("extraJson") String extraJson,
+                                @Param("updatedAt") String updatedAt);
+
     @Select("SELECT COUNT(1) FROM session")
     long countAll();
 
