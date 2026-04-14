@@ -9,6 +9,9 @@ import org.apache.ibatis.annotations.Select;
 
 public interface HistoryMapper {
 
+    @Select("SELECT COUNT(1) FROM message_fts")
+    long countIndexedMessages();
+
     @Insert("""
             INSERT INTO message_fts (
                 message_id, session_id, role, message_type, content_text, raw_chunk

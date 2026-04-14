@@ -8,7 +8,7 @@ spring:
     time-zone: Asia/Shanghai
   sql:
     init:
-      mode: always
+      mode: never
       schema-locations: classpath:db/schema/schema.sql
 
 server:

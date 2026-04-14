@@ -22,6 +22,7 @@ import com.aliano.mutiagent.infrastructure.process.ProcessRuntime;
 import com.aliano.mutiagent.infrastructure.process.ProcessSupervisor;
 import com.aliano.mutiagent.infrastructure.process.SessionLaunchContext;
 import com.aliano.mutiagent.infrastructure.process.StopMode;
+import com.aliano.mutiagent.infrastructure.storage.SessionRawLogWriter;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -151,11 +152,15 @@ public class SessionAppService {
             return "";
         }
         try {
-            Path path = Path.of(session.getRawLogPath());
-            if (!Files.exists(path)) {
+            Path rawLogPath = Path.of(session.getRawLogPath());
+            Path replayPath = SessionRawLogWriter.resolveReplayPath(rawLogPath);
+            if (Files.exists(replayPath)) {
+                return Files.readString(replayPath);
+            }
+            if (!Files.exists(rawLogPath)) {
                 return "";
             }
-            return Files.readString(path);
+            return Files.readString(rawLogPath);
         } catch (IOException exception) {
             throw new BusinessException("读取原始日志失败", exception);
         }
@@ -174,6 +179,7 @@ public class SessionAppService {
             throw new BusinessException("应用实例已禁用");
         }
 
+        AIAdapter adapter = adapterRegistry.resolve(instance);
         String now = OffsetDateTime.now().toString();
         AiSession session = new AiSession();
         session.setId(idGenerator.next("ses"));
@@ -181,7 +187,7 @@ public class SessionAppService {
         session.setTitle(StringUtils.hasText(request.title()) ? request.title() : instance.getName());
         session.setProjectPath(request.projectPath());
         session.setStatus(SessionStatus.STARTING.name());
-        session.setInteractionMode(resolveInteractionMode(request.interactionMode()));
+        session.setInteractionMode(resolveInteractionMode(request.interactionMode(), adapter));
         SessionWorkspaceMeta workspaceMeta = normalizeWorkspaceMeta(request.workspaceMeta(), null, request.tags(), now);
         session.setTagsJson(writeJson(buildWorkspaceTags(request.tags(), workspaceMeta)));
         session.setExtraJson(writeJson(workspaceMeta));
@@ -195,7 +201,6 @@ public class SessionAppService {
         createdPayload.put("title", session.getTitle());
         sessionEventPublisher.publish("session.created", session.getId(), createdPayload);
 
-        AIAdapter adapter = adapterRegistry.resolve(instance);
         try {
             ProcessRuntime runtime = processSupervisor.start(new SessionLaunchContext(session, instance, adapter));
             String startedAt = OffsetDateTime.now().toString();
@@ -221,11 +226,13 @@ public class SessionAppService {
             return get(session.getId());
         } catch (IOException exception) {
             String failedAt = OffsetDateTime.now().toString();
-            sessionMapper.updateStatus(session.getId(), SessionStatus.FAILED.name(), failedAt, -1, exception.getMessage(), failedAt);
+            String exitReason = trimToNull(exception.getMessage());
+            sessionMapper.updateStatus(session.getId(), SessionStatus.FAILED.name(), failedAt, -1, exitReason, failedAt);
+            syncFailedWorkspaceMetadata(session, exitReason, failedAt);
             Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("message", exception.getMessage());
+            payload.put("message", exitReason);
             sessionEventPublisher.publish("session.error", session.getId(), payload);
-            throw new BusinessException("启动会话失败: " + exception.getMessage(), exception);
+            throw new BusinessException("启动会话失败: " + exitReason, exception);
         }
     }
 
@@ -281,7 +288,13 @@ public class SessionAppService {
         }
         String now = OffsetDateTime.now().toString();
         sessionMapper.updateStatusOnly(sessionId, SessionStatus.STOPPING.name(), now);
-        processSupervisor.stop(sessionId, stopMode);
+        sessionStreamAppService.markStopRequested(sessionId, stopMode);
+        try {
+            processSupervisor.stop(sessionId, stopMode);
+        } catch (RuntimeException exception) {
+            sessionStreamAppService.cancelStopRequested(sessionId);
+            throw exception;
+        }
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("status", SessionStatus.STOPPING.name());
@@ -296,11 +309,34 @@ public class SessionAppService {
         processSupervisor.resizeTerminal(sessionId, cols, rows);
     }
 
-    private String resolveInteractionMode(String interactionMode) {
+    private String resolveInteractionMode(String interactionMode, AIAdapter adapter) {
         if (!StringUtils.hasText(interactionMode)) {
             return InteractionMode.RAW.name();
         }
-        return interactionMode.toUpperCase();
+        String normalized = interactionMode.trim().toUpperCase();
+        if (InteractionMode.STRUCTURED.name().equals(normalized) && !adapter.supportsStructuredMessage()) {
+            throw new BusinessException("当前应用实例暂不支持 STRUCTURED 模式，请改用 RAW 终端协作模式");
+        }
+        return normalized;
+    }
+
+    private void syncFailedWorkspaceMetadata(AiSession session, String exitReason, String updatedAt) {
+        SessionWorkspaceMeta current = readWorkspaceMeta(session);
+        SessionWorkspaceMeta patch = new SessionWorkspaceMeta();
+        patch.setWorkspaceKind(current.getWorkspaceKind());
+        patch.setRole(current.getRole());
+        patch.setCoordinationStatus("blocked");
+        patch.setProgressSummary(firstNonBlank(trimToNull(exitReason), current.getProgressSummary()));
+        patch.setBlockedReason(trimToNull(exitReason));
+        patch.setSharedContextSummary(current.getSharedContextSummary());
+        patch.setDependencySessionIds(current.getDependencySessionIds());
+        patch.setUpdatedAt(updatedAt);
+
+        SessionWorkspaceMeta merged = normalizeWorkspaceMeta(patch, current, parseTags(session.getTagsJson()), updatedAt);
+        String tagsJson = writeJson(buildWorkspaceTags(parseTags(session.getTagsJson()), merged));
+        String extraJson = writeJson(merged);
+        String summary = firstNonBlank(trimToNull(exitReason), merged.getProgressSummary(), session.getSummary());
+        sessionMapper.updateWorkspaceMetadata(session.getId(), summary, tagsJson, extraJson, updatedAt);
     }
 
     private SessionWorkspaceMeta readWorkspaceMeta(AiSession session) {

@@ -198,7 +198,7 @@ public class LocalProcessSupervisor implements ProcessSupervisor {
     }
 
     private void emitChunk(ManagedProcess managedProcess, String streamName, String chunk) throws IOException {
-        if (!StringUtils.hasText(chunk)) {
+        if (chunk == null || chunk.isEmpty()) {
             return;
         }
         sessionRawLogWriter.append(Path.of(managedProcess.runtime.rawLogPath()), streamName, chunk);

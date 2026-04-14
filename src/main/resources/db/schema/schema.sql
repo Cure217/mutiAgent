@@ -120,28 +120,6 @@ USING fts5(
     tokenize = 'unicode61'
 );
 
-INSERT INTO message_fts (
-    message_id,
-    session_id,
-    role,
-    message_type,
-    content_text,
-    raw_chunk
-)
-SELECT
-    m.id,
-    m.session_id,
-    m.role,
-    m.message_type,
-    COALESCE(m.content_text, ''),
-    COALESCE(m.raw_chunk, '')
-FROM message m
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM message_fts f
-    WHERE f.message_id = m.id
-);
-
 INSERT OR IGNORE INTO config (
     id,
     config_group,

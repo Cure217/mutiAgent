@@ -5,20 +5,35 @@ import com.aliano.mutiagent.application.dto.HistorySearchResult;
 import com.aliano.mutiagent.application.dto.HistorySearchSessionHit;
 import com.aliano.mutiagent.common.model.PageResponse;
 import com.aliano.mutiagent.infrastructure.persistence.mapper.HistoryMapper;
+import com.aliano.mutiagent.infrastructure.persistence.mapper.MessageMapper;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 @Service
-@RequiredArgsConstructor
+@Slf4j
 public class HistoryAppService {
 
     private final HistoryMapper historyMapper;
+    private final MessageMapper messageMapper;
+    private final Executor processTaskExecutor;
+    private final AtomicBoolean messageFtsWarmupRunning = new AtomicBoolean(false);
+
+    public HistoryAppService(HistoryMapper historyMapper,
+                             MessageMapper messageMapper,
+                             @Qualifier("processTaskExecutor") Executor processTaskExecutor) {
+        this.historyMapper = historyMapper;
+        this.messageMapper = messageMapper;
+        this.processTaskExecutor = processTaskExecutor;
+    }
 
     public HistorySearchResult search(String keyword,
                                       String appType,
@@ -72,48 +87,74 @@ public class HistoryAppService {
         long messageTotal = 0;
         List<HistorySearchMessageHit> messageHits = Collections.emptyList();
         if (StringUtils.hasText(normalizedKeyword)) {
-            historyMapper.syncMessageFts();
-            String ftsKeyword = buildFtsKeyword(normalizedKeyword);
-            try {
-                messageTotal = historyMapper.countMessageHitsByFts(
-                        ftsKeyword,
-                        normalizedAppType,
-                        normalizedProjectPath,
-                        normalizedDateFrom,
-                        normalizedDateTo
-                );
-                messageHits = messageTotal == 0
-                        ? Collections.emptyList()
-                        : historyMapper.searchMessageHitsByFts(
-                                ftsKeyword,
-                                normalizedAppType,
-                                normalizedProjectPath,
-                                normalizedDateFrom,
-                                normalizedDateTo,
-                                resolveMessageOrderBy(messageSortBy, messageSortDirection, true),
-                                safeMessagePageSize,
-                                messageOffset
-                        );
-            } catch (DataAccessException exception) {
-                messageTotal = historyMapper.countMessageHitsByLike(
+            boolean preferFts = isMessageFtsReady();
+            if (!preferFts) {
+                warmupMessageFtsAsync();
+            }
+            if (preferFts) {
+                String ftsKeyword = buildFtsKeyword(normalizedKeyword);
+                try {
+                    messageTotal = historyMapper.countMessageHitsByFts(
+                            ftsKeyword,
+                            normalizedAppType,
+                            normalizedProjectPath,
+                            normalizedDateFrom,
+                            normalizedDateTo
+                    );
+                    messageHits = messageTotal == 0
+                            ? Collections.emptyList()
+                            : historyMapper.searchMessageHitsByFts(
+                                    ftsKeyword,
+                                    normalizedAppType,
+                                    normalizedProjectPath,
+                                    normalizedDateFrom,
+                                    normalizedDateTo,
+                                    resolveMessageOrderBy(messageSortBy, messageSortDirection, true),
+                                    safeMessagePageSize,
+                                    messageOffset
+                            );
+                } catch (DataAccessException exception) {
+                    log.warn("历史搜索 FTS 查询失败，回退到 LIKE 搜索", exception);
+                    messageTotal = searchMessageTotalByLike(
+                            normalizedKeyword,
+                            normalizedAppType,
+                            normalizedProjectPath,
+                            normalizedDateFrom,
+                            normalizedDateTo
+                    );
+                    messageHits = searchMessageHitsByLike(
+                            normalizedKeyword,
+                            normalizedAppType,
+                            normalizedProjectPath,
+                            normalizedDateFrom,
+                            normalizedDateTo,
+                            messageSortBy,
+                            messageSortDirection,
+                            safeMessagePageSize,
+                            messageOffset,
+                            messageTotal
+                    );
+                }
+            } else {
+                messageTotal = searchMessageTotalByLike(
                         normalizedKeyword,
                         normalizedAppType,
                         normalizedProjectPath,
                         normalizedDateFrom,
                         normalizedDateTo
                 );
-                messageHits = messageTotal == 0
-                        ? Collections.emptyList()
-                        : historyMapper.searchMessageHitsByLike(
-                                normalizedKeyword,
-                                normalizedAppType,
-                                normalizedProjectPath,
-                                normalizedDateFrom,
-                                normalizedDateTo,
-                                resolveMessageOrderBy(messageSortBy, messageSortDirection, false),
-                                safeMessagePageSize,
-                                messageOffset
-                        );
+                messageHits = searchMessageHitsByLike(
+                        normalizedKeyword,
+                        normalizedAppType,
+                        normalizedProjectPath,
+                        normalizedDateFrom,
+                        normalizedDateTo,
+                        messageSortBy,
+                        messageSortDirection,
+                        safeMessagePageSize,
+                        messageOffset,
+                        messageTotal
+                );
             }
             messageHits.forEach(hit -> hit.setSnippet(clipTextAroundKeyword(hit.getSnippet(), normalizedKeyword, 200)));
         }
@@ -122,6 +163,72 @@ public class HistoryAppService {
         result.setSessions(new PageResponse<>(sessionHits, validSessionPageNo, safeSessionPageSize, sessionTotal));
         result.setMessages(new PageResponse<>(messageHits, validMessagePageNo, safeMessagePageSize, messageTotal));
         return result;
+    }
+
+    private boolean isMessageFtsReady() {
+        try {
+            long totalMessages = messageMapper.countAll();
+            if (totalMessages == 0) {
+                return true;
+            }
+            return historyMapper.countIndexedMessages() >= totalMessages;
+        } catch (DataAccessException exception) {
+            log.warn("检查历史搜索 FTS 状态失败，当前请求回退到 LIKE 搜索", exception);
+            return false;
+        }
+    }
+
+    private void warmupMessageFtsAsync() {
+        if (!messageFtsWarmupRunning.compareAndSet(false, true)) {
+            return;
+        }
+        processTaskExecutor.execute(() -> {
+            try {
+                historyMapper.syncMessageFts();
+            } catch (Exception exception) {
+                log.warn("后台预热历史搜索 FTS 失败", exception);
+            } finally {
+                messageFtsWarmupRunning.set(false);
+            }
+        });
+    }
+
+    private long searchMessageTotalByLike(String keyword,
+                                          String appType,
+                                          String projectPath,
+                                          String dateFrom,
+                                          String dateTo) {
+        return historyMapper.countMessageHitsByLike(
+                keyword,
+                appType,
+                projectPath,
+                dateFrom,
+                dateTo
+        );
+    }
+
+    private List<HistorySearchMessageHit> searchMessageHitsByLike(String keyword,
+                                                                  String appType,
+                                                                  String projectPath,
+                                                                  String dateFrom,
+                                                                  String dateTo,
+                                                                  String messageSortBy,
+                                                                  String messageSortDirection,
+                                                                  int pageSize,
+                                                                  int offset,
+                                                                  long total) {
+        return total == 0
+                ? Collections.emptyList()
+                : historyMapper.searchMessageHitsByLike(
+                        keyword,
+                        appType,
+                        projectPath,
+                        dateFrom,
+                        dateTo,
+                        resolveMessageOrderBy(messageSortBy, messageSortDirection, false),
+                        pageSize,
+                        offset
+                );
     }
 
     private String resolveMatchedSource(HistorySearchSessionHit hit, String keyword) {

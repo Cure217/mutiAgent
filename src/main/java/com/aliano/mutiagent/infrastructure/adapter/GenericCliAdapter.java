@@ -65,6 +65,9 @@ public class GenericCliAdapter implements AIAdapter {
         if (!StringUtils.hasText(sanitizedChunk)) {
             return new ParseResult(Collections.emptyList());
         }
+        if (!"stdout".equalsIgnoreCase(streamName) && isRedundantErrorChunk(sanitizedChunk)) {
+            return new ParseResult(Collections.emptyList());
+        }
         String role = "stdout".equalsIgnoreCase(streamName)
                 ? MessageRole.ASSISTANT.name().toLowerCase()
                 : MessageRole.SYSTEM.name().toLowerCase();
@@ -123,6 +126,11 @@ public class GenericCliAdapter implements AIAdapter {
             return "";
         }
         return normalized.strip();
+    }
+
+    private boolean isRedundantErrorChunk(String text) {
+        String normalized = text.trim();
+        return "Error:".equalsIgnoreCase(normalized) || "Error".equalsIgnoreCase(normalized);
     }
 
     private LaunchPlan buildWslLaunchPlan(AppInstance instance, AiSession session, List<String> args) {
