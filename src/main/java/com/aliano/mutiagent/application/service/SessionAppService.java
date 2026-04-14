@@ -1,6 +1,7 @@
 package com.aliano.mutiagent.application.service;
 
 import com.aliano.mutiagent.application.dto.CreateSessionRequest;
+import com.aliano.mutiagent.application.dto.SessionSharedContextRef;
 import com.aliano.mutiagent.application.dto.SessionTimelineItem;
 import com.aliano.mutiagent.application.dto.SessionWorkspaceMeta;
 import com.aliano.mutiagent.application.dto.UpdateSessionWorkspaceRequest;
@@ -219,6 +220,7 @@ public class SessionAppService {
             runningPayload.put("pid", runtime.pid());
             runningPayload.put("rawLogPath", runtime.rawLogPath());
             sessionEventPublisher.publish("session.status.changed", session.getId(), runningPayload);
+            syncWorkspaceRuntimeMetadata(session, "running", null, "", startedAt, true);
 
             if (StringUtils.hasText(request.initInput()) && adapter.supportsInteractiveInput()) {
                 sendInput(session.getId(), request.initInput(), true, true);
@@ -228,7 +230,13 @@ public class SessionAppService {
             String failedAt = OffsetDateTime.now().toString();
             String exitReason = trimToNull(exception.getMessage());
             sessionMapper.updateStatus(session.getId(), SessionStatus.FAILED.name(), failedAt, -1, exitReason, failedAt);
-            syncFailedWorkspaceMetadata(session, exitReason, failedAt);
+            Map<String, Object> failedPayload = new LinkedHashMap<>();
+            failedPayload.put("status", SessionStatus.FAILED.name());
+            failedPayload.put("exitCode", -1);
+            failedPayload.put("exitReason", exitReason);
+            failedPayload.put("endedAt", failedAt);
+            sessionEventPublisher.publish("session.status.changed", session.getId(), failedPayload);
+            syncFailedWorkspaceMetadata(session, exitReason, failedAt, true);
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("message", exitReason);
             sessionEventPublisher.publish("session.error", session.getId(), payload);
@@ -243,27 +251,21 @@ public class SessionAppService {
         patch.setWorkspaceKind(request.workspaceKind());
         patch.setRole(request.role());
         patch.setCoordinationStatus(request.coordinationStatus());
-        patch.setProgressSummary(trimToNull(request.progressSummary()));
-        patch.setBlockedReason(trimToNull(request.blockedReason()));
-        patch.setSharedContextSummary(trimToNull(request.sharedContextSummary()));
+        patch.setProgressSummary(request.progressSummary());
+        patch.setBlockedReason(request.blockedReason());
+        patch.setSharedContextSummary(request.sharedContextSummary());
+        patch.setSharedContextRefs(request.sharedContextRefs());
+        patch.setTaskScope(request.taskScope());
+        patch.setAcceptanceCriteria(request.acceptanceCriteria());
+        patch.setDeliverableSpec(request.deliverableSpec());
+        patch.setSharedContextMode(request.sharedContextMode());
+        patch.setSharedContextLimit(request.sharedContextLimit());
         if (request.dependencySessionIds() != null) {
             patch.setDependencySessionIds(request.dependencySessionIds());
         }
 
         String now = OffsetDateTime.now().toString();
-        SessionWorkspaceMeta merged = normalizeWorkspaceMeta(patch, current, parseTags(session.getTagsJson()), now);
-        String tagsJson = writeJson(buildWorkspaceTags(parseTags(session.getTagsJson()), merged));
-        String extraJson = writeJson(merged);
-        String summary = firstNonBlank(merged.getProgressSummary(), merged.getBlockedReason(), session.getSummary());
-        sessionMapper.updateWorkspaceMetadata(sessionId, summary, tagsJson, extraJson, now);
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("summary", summary);
-        payload.put("tagsJson", tagsJson);
-        payload.put("extraJson", extraJson);
-        payload.put("workspaceMeta", merged);
-        sessionEventPublisher.publish("session.workspace.updated", sessionId, payload);
-        return merged;
+        return syncWorkspaceMetadata(session, patch, now, true);
     }
 
     public void sendInput(String sessionId, String content, boolean appendNewLine, boolean recordInput) {
@@ -320,23 +322,65 @@ public class SessionAppService {
         return normalized;
     }
 
-    private void syncFailedWorkspaceMetadata(AiSession session, String exitReason, String updatedAt) {
+    private void syncFailedWorkspaceMetadata(AiSession session, String exitReason, String updatedAt, boolean publishEvent) {
         SessionWorkspaceMeta current = readWorkspaceMeta(session);
         SessionWorkspaceMeta patch = new SessionWorkspaceMeta();
         patch.setWorkspaceKind(current.getWorkspaceKind());
         patch.setRole(current.getRole());
         patch.setCoordinationStatus("blocked");
         patch.setProgressSummary(firstNonBlank(trimToNull(exitReason), current.getProgressSummary()));
-        patch.setBlockedReason(trimToNull(exitReason));
+        patch.setBlockedReason(exitReason);
         patch.setSharedContextSummary(current.getSharedContextSummary());
+        patch.setSharedContextRefs(current.getSharedContextRefs());
+        patch.setTaskScope(current.getTaskScope());
+        patch.setAcceptanceCriteria(current.getAcceptanceCriteria());
+        patch.setDeliverableSpec(current.getDeliverableSpec());
+        patch.setSharedContextMode(current.getSharedContextMode());
+        patch.setSharedContextLimit(current.getSharedContextLimit());
         patch.setDependencySessionIds(current.getDependencySessionIds());
         patch.setUpdatedAt(updatedAt);
+        syncWorkspaceMetadata(session, patch, updatedAt, publishEvent);
+    }
 
+    private void syncWorkspaceRuntimeMetadata(AiSession session,
+                                              String coordinationStatus,
+                                              String progressSummary,
+                                              String blockedReason,
+                                              String updatedAt,
+                                              boolean publishEvent) {
+        SessionWorkspaceMeta current = readWorkspaceMeta(session);
+        SessionWorkspaceMeta patch = new SessionWorkspaceMeta();
+        patch.setWorkspaceKind(current.getWorkspaceKind());
+        patch.setRole(current.getRole());
+        patch.setCoordinationStatus(coordinationStatus);
+        patch.setProgressSummary(progressSummary);
+        patch.setBlockedReason(blockedReason);
+        patch.setSharedContextSummary(current.getSharedContextSummary());
+        patch.setSharedContextRefs(current.getSharedContextRefs());
+        patch.setTaskScope(current.getTaskScope());
+        patch.setAcceptanceCriteria(current.getAcceptanceCriteria());
+        patch.setDeliverableSpec(current.getDeliverableSpec());
+        patch.setSharedContextMode(current.getSharedContextMode());
+        patch.setSharedContextLimit(current.getSharedContextLimit());
+        patch.setDependencySessionIds(current.getDependencySessionIds());
+        patch.setUpdatedAt(updatedAt);
+        syncWorkspaceMetadata(session, patch, updatedAt, publishEvent);
+    }
+
+    private SessionWorkspaceMeta syncWorkspaceMetadata(AiSession session,
+                                                       SessionWorkspaceMeta patch,
+                                                       String updatedAt,
+                                                       boolean publishEvent) {
+        SessionWorkspaceMeta current = readWorkspaceMeta(session);
         SessionWorkspaceMeta merged = normalizeWorkspaceMeta(patch, current, parseTags(session.getTagsJson()), updatedAt);
         String tagsJson = writeJson(buildWorkspaceTags(parseTags(session.getTagsJson()), merged));
         String extraJson = writeJson(merged);
-        String summary = firstNonBlank(trimToNull(exitReason), merged.getProgressSummary(), session.getSummary());
+        String summary = resolveWorkspaceSummary(session, merged, patch);
         sessionMapper.updateWorkspaceMetadata(session.getId(), summary, tagsJson, extraJson, updatedAt);
+        if (publishEvent) {
+            publishWorkspaceUpdated(session.getId(), summary, tagsJson, extraJson, merged);
+        }
+        return merged;
     }
 
     private SessionWorkspaceMeta readWorkspaceMeta(AiSession session) {
@@ -369,17 +413,38 @@ public class SessionAppService {
                 extractTagValue(safeTags, "coordination:"),
                 "assigned"
         ));
-        meta.setProgressSummary(firstNonBlank(
-                trimToNull(incoming == null ? null : incoming.getProgressSummary()),
-                trimToNull(current == null ? null : current.getProgressSummary())
+        meta.setProgressSummary(mergeNullableText(
+                incoming == null ? null : incoming.getProgressSummary(),
+                current == null ? null : current.getProgressSummary()
         ));
-        meta.setBlockedReason(firstNonBlank(
-                trimToNull(incoming == null ? null : incoming.getBlockedReason()),
-                trimToNull(current == null ? null : current.getBlockedReason())
+        meta.setBlockedReason(mergeNullableText(
+                incoming == null ? null : incoming.getBlockedReason(),
+                current == null ? null : current.getBlockedReason()
         ));
-        meta.setSharedContextSummary(firstNonBlank(
-                trimToNull(incoming == null ? null : incoming.getSharedContextSummary()),
-                trimToNull(current == null ? null : current.getSharedContextSummary())
+        meta.setSharedContextSummary(mergeNullableText(
+                incoming == null ? null : incoming.getSharedContextSummary(),
+                current == null ? null : current.getSharedContextSummary()
+        ));
+        meta.setSharedContextRefs(resolveSharedContextRefs(incoming, current));
+        meta.setTaskScope(mergeNullableText(
+                incoming == null ? null : incoming.getTaskScope(),
+                current == null ? null : current.getTaskScope()
+        ));
+        meta.setAcceptanceCriteria(mergeNullableText(
+                incoming == null ? null : incoming.getAcceptanceCriteria(),
+                current == null ? null : current.getAcceptanceCriteria()
+        ));
+        meta.setDeliverableSpec(mergeNullableText(
+                incoming == null ? null : incoming.getDeliverableSpec(),
+                current == null ? null : current.getDeliverableSpec()
+        ));
+        meta.setSharedContextMode(mergeNullableText(
+                incoming == null ? null : incoming.getSharedContextMode(),
+                current == null ? null : current.getSharedContextMode()
+        ));
+        meta.setSharedContextLimit(resolveNullableInteger(
+                incoming == null ? null : incoming.getSharedContextLimit(),
+                current == null ? null : current.getSharedContextLimit()
         ));
         meta.setDependencySessionIds(resolveDependencyIds(incoming, current, safeTags));
         meta.setUpdatedAt(firstNonBlank(
@@ -413,6 +478,55 @@ public class SessionAppService {
                 .filter(StringUtils::hasText)
                 .distinct()
                 .toList();
+    }
+
+    private List<SessionSharedContextRef> resolveSharedContextRefs(SessionWorkspaceMeta incoming,
+                                                                   SessionWorkspaceMeta current) {
+        if (incoming != null && incoming.getSharedContextRefs() != null) {
+            return normalizeSharedContextRefs(incoming.getSharedContextRefs());
+        }
+        if (current != null && current.getSharedContextRefs() != null && !current.getSharedContextRefs().isEmpty()) {
+            return normalizeSharedContextRefs(current.getSharedContextRefs());
+        }
+        return List.of();
+    }
+
+    private List<SessionSharedContextRef> normalizeSharedContextRefs(List<SessionSharedContextRef> refs) {
+        if (refs == null || refs.isEmpty()) {
+            return List.of();
+        }
+        List<SessionSharedContextRef> normalized = new ArrayList<>();
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        for (SessionSharedContextRef ref : refs) {
+            SessionSharedContextRef candidate = normalizeSharedContextRef(ref);
+            if (candidate == null || !seen.add(candidate.getSessionId())) {
+                continue;
+            }
+            normalized.add(candidate);
+        }
+        return List.copyOf(normalized);
+    }
+
+    private SessionSharedContextRef normalizeSharedContextRef(SessionSharedContextRef ref) {
+        if (ref == null) {
+            return null;
+        }
+        String sessionId = trimToNull(ref.getSessionId());
+        if (!StringUtils.hasText(sessionId)) {
+            return null;
+        }
+        SessionSharedContextRef normalized = new SessionSharedContextRef();
+        normalized.setSessionId(sessionId);
+        normalized.setRoleKey(trimToNull(ref.getRoleKey()));
+        normalized.setRoleLabel(trimToNull(ref.getRoleLabel()));
+        normalized.setTitle(trimToNull(ref.getTitle()));
+        normalized.setCoordinationState(trimToNull(ref.getCoordinationState()));
+        normalized.setCoordinationLabel(trimToNull(ref.getCoordinationLabel()));
+        normalized.setProgressHint(trimToNull(ref.getProgressHint()));
+        normalized.setIncludedReason(trimToNull(ref.getIncludedReason()));
+        normalized.setLastActiveAt(trimToNull(ref.getLastActiveAt()));
+        normalized.setLastActiveText(trimToNull(ref.getLastActiveText()));
+        return normalized;
     }
 
     private List<String> buildWorkspaceTags(List<String> originalTags, SessionWorkspaceMeta workspaceMeta) {
@@ -466,6 +580,48 @@ public class SessionAppService {
                 .findFirst()
                 .map(tag -> trimToNull(tag.substring(prefix.length())))
                 .orElse(null);
+    }
+
+    private String resolveWorkspaceSummary(AiSession session, SessionWorkspaceMeta merged, SessionWorkspaceMeta patch) {
+        if (StringUtils.hasText(merged.getProgressSummary())) {
+            return merged.getProgressSummary();
+        }
+        if (StringUtils.hasText(merged.getBlockedReason())) {
+            return merged.getBlockedReason();
+        }
+        if (hasExplicitSummaryUpdate(patch)) {
+            return null;
+        }
+        return trimToNull(session.getSummary());
+    }
+
+    private boolean hasExplicitSummaryUpdate(SessionWorkspaceMeta patch) {
+        return patch != null
+                && (patch.getProgressSummary() != null || patch.getBlockedReason() != null);
+    }
+
+    private String mergeNullableText(String incomingValue, String currentValue) {
+        if (incomingValue != null) {
+            return trimToNull(incomingValue);
+        }
+        return trimToNull(currentValue);
+    }
+
+    private Integer resolveNullableInteger(Integer incomingValue, Integer currentValue) {
+        return incomingValue != null ? incomingValue : currentValue;
+    }
+
+    private void publishWorkspaceUpdated(String sessionId,
+                                         String summary,
+                                         String tagsJson,
+                                         String extraJson,
+                                         SessionWorkspaceMeta workspaceMeta) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("tagsJson", tagsJson);
+        payload.put("extraJson", extraJson);
+        payload.put("workspaceMeta", workspaceMeta);
+        sessionEventPublisher.publish("session.workspace.updated", sessionId, payload);
     }
 
     private String writeJson(Object value) {

@@ -18,5 +18,11 @@ public class SessionWorkspaceMeta {
     private String blockedReason;
     private List<String> dependencySessionIds = new ArrayList<>();
     private String sharedContextSummary;
+    private List<SessionSharedContextRef> sharedContextRefs = new ArrayList<>();
+    private String taskScope;
+    private String acceptanceCriteria;
+    private String deliverableSpec;
+    private String sharedContextMode;
+    private Integer sharedContextLimit;
     private String updatedAt;
 }

@@ -9,5 +9,11 @@ public record UpdateSessionWorkspaceRequest(
         String progressSummary,
         String blockedReason,
         List<String> dependencySessionIds,
-        String sharedContextSummary) {
+        String sharedContextSummary,
+        List<SessionSharedContextRef> sharedContextRefs,
+        String taskScope,
+        String acceptanceCriteria,
+        String deliverableSpec,
+        String sharedContextMode,
+        Integer sharedContextLimit) {
 }
