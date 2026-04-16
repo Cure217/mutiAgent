@@ -144,4 +144,5 @@ public class CommandAppService {
             detail.put("errorMessage", exception.getMessage());
         }
     }
+
 }

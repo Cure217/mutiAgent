@@ -1,5 +1,6 @@
 package com.aliano.mutiagent.infrastructure.event;
 
+import com.aliano.mutiagent.application.service.ClientAttachmentAppService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -22,13 +23,14 @@ public class SessionWebSocketHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     private final ClientAttachmentRegistry clientAttachmentRegistry;
+    private final ClientAttachmentAppService clientAttachmentAppService;
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         sessions.add(session);
         AttachmentHandshake handshake = resolveHandshake(session);
-        clientAttachmentRegistry.attach(
+        ClientAttachment attachment = clientAttachmentRegistry.attach(
                 session.getId(),
                 handshake.clientId(),
                 handshake.observedTargetType(),
@@ -36,18 +38,25 @@ public class SessionWebSocketHandler extends TextWebSocketHandler {
                 session.getHandshakeHeaders().getFirst("User-Agent"),
                 resolveRemoteAddress(session)
         );
+        clientAttachmentAppService.recordAttach(attachment);
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         sessions.remove(session);
-        clientAttachmentRegistry.detach(session.getId());
+        ClientAttachment attachment = clientAttachmentRegistry.detach(session.getId());
+        if (attachment != null) {
+            clientAttachmentAppService.recordDetach(attachment);
+        }
     }
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
         sessions.remove(session);
-        clientAttachmentRegistry.detach(session.getId());
+        ClientAttachment attachment = clientAttachmentRegistry.detach(session.getId());
+        if (attachment != null) {
+            clientAttachmentAppService.recordDetach(attachment);
+        }
     }
 
     @Override
@@ -56,25 +65,33 @@ public class SessionWebSocketHandler extends TextWebSocketHandler {
         if (signal == null) {
             return;
         }
-        clientAttachmentRegistry.heartbeat(
+        ClientAttachment previousAttachment = clientAttachmentRegistry.get(session.getId());
+        ClientAttachment nextAttachment = clientAttachmentRegistry.heartbeat(
                 session.getId(),
                 signal.observedTargetType(),
                 signal.observedTargetId()
         );
+        clientAttachmentAppService.recordObserve(previousAttachment, nextAttachment);
     }
 
     public void broadcast(String payload) {
         for (WebSocketSession session : sessions) {
             if (!session.isOpen()) {
                 sessions.remove(session);
-                clientAttachmentRegistry.detach(session.getId());
+                ClientAttachment attachment = clientAttachmentRegistry.detach(session.getId());
+                if (attachment != null) {
+                    clientAttachmentAppService.recordDetach(attachment);
+                }
                 continue;
             }
             try {
                 session.sendMessage(new TextMessage(payload));
             } catch (IOException exception) {
                 sessions.remove(session);
-                clientAttachmentRegistry.detach(session.getId());
+                ClientAttachment attachment = clientAttachmentRegistry.detach(session.getId());
+                if (attachment != null) {
+                    clientAttachmentAppService.recordDetach(attachment);
+                }
             }
         }
     }

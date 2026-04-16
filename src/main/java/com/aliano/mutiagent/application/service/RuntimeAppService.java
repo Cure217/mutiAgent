@@ -2,6 +2,7 @@ package com.aliano.mutiagent.application.service;
 
 import com.aliano.mutiagent.config.MutiAgentProperties;
 import com.aliano.mutiagent.infrastructure.event.ClientAttachmentRegistry;
+import com.aliano.mutiagent.infrastructure.event.ClientAttachment;
 import com.aliano.mutiagent.infrastructure.persistence.mapper.AppInstanceMapper;
 import com.aliano.mutiagent.infrastructure.persistence.mapper.MessageMapper;
 import com.aliano.mutiagent.infrastructure.persistence.mapper.SessionMapper;
@@ -51,5 +52,9 @@ public class RuntimeAppService {
 
     public List<ProcessRuntime> processes() {
         return processSupervisor.listRunning();
+    }
+
+    public List<ClientAttachment> attachments() {
+        return clientAttachmentRegistry.snapshot();
     }
 }

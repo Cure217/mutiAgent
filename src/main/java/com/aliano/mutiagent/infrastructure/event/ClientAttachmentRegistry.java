@@ -36,8 +36,12 @@ public class ClientAttachmentRegistry {
         );
     }
 
-    public void detach(String transportSessionId) {
-        attachments.remove(transportSessionId);
+    public ClientAttachment get(String transportSessionId) {
+        return attachments.get(transportSessionId);
+    }
+
+    public ClientAttachment detach(String transportSessionId) {
+        return attachments.remove(transportSessionId);
     }
 
     public int countAll() {

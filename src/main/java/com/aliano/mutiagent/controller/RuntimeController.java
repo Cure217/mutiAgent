@@ -2,6 +2,7 @@ package com.aliano.mutiagent.controller;
 
 import com.aliano.mutiagent.application.service.RuntimeAppService;
 import com.aliano.mutiagent.common.model.ApiResponse;
+import com.aliano.mutiagent.infrastructure.event.ClientAttachment;
 import com.aliano.mutiagent.infrastructure.process.ProcessRuntime;
 import java.util.List;
 import java.util.Map;
@@ -30,5 +31,10 @@ public class RuntimeController {
     @GetMapping("/processes")
     public ApiResponse<List<ProcessRuntime>> processes() {
         return ApiResponse.success(runtimeAppService.processes());
+    }
+
+    @GetMapping("/attachments")
+    public ApiResponse<List<ClientAttachment>> attachments() {
+        return ApiResponse.success(runtimeAppService.attachments());
     }
 }
