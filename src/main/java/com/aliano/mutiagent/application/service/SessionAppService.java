@@ -45,9 +45,12 @@ import org.springframework.util.StringUtils;
 @RequiredArgsConstructor
 public class SessionAppService {
 
+    private static final String MISSING_PROCESS_EXIT_REASON = "会话进程已不在当前后端中，可能是后端或桌面端重启导致，无法继续接管";
+
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
     private final AppInstanceMapper appInstanceMapper;
+    private final InstanceAppService instanceAppService;
     private final AdapterRegistry adapterRegistry;
     private final ProcessSupervisor processSupervisor;
     private final SessionEventPublisher sessionEventPublisher;
@@ -56,6 +59,7 @@ public class SessionAppService {
     private final ObjectMapper objectMapper;
 
     public PageResponse<AiSession> list(String appInstanceId, String status, String keyword, int pageNo, int pageSize) {
+        reconcileMissingRunningProcesses();
         int validPageNo = Math.max(pageNo, 1);
         int validPageSize = Math.max(pageSize, 1);
         int offset = (validPageNo - 1) * validPageSize;
@@ -69,10 +73,11 @@ public class SessionAppService {
         if (session == null) {
             throw new BusinessException("会话不存在");
         }
-        return session;
+        return reconcileMissingRunningProcess(session, true);
     }
 
     public List<AiSession> runningSessions() {
+        reconcileMissingRunningProcesses();
         return sessionMapper.findRunning();
     }
 
@@ -172,10 +177,7 @@ public class SessionAppService {
     }
 
     public AiSession createAndStart(CreateSessionRequest request) {
-        AppInstance instance = appInstanceMapper.findById(request.appInstanceId());
-        if (instance == null) {
-            throw new BusinessException("应用实例不存在");
-        }
+        AppInstance instance = instanceAppService.get(request.appInstanceId());
         if (!Boolean.TRUE.equals(instance.getEnabled())) {
             throw new BusinessException("应用实例已禁用");
         }
@@ -271,7 +273,10 @@ public class SessionAppService {
     public void sendInput(String sessionId, String content, boolean appendNewLine, boolean recordInput) {
         AiSession session = get(sessionId);
         if (!SessionStatus.RUNNING.name().equals(session.getStatus())) {
-            throw new BusinessException("当前会话状态为 " + session.getStatus() + "，不可输入");
+            String exitReason = trimToNull(session.getExitReason());
+            throw new BusinessException(exitReason == null
+                    ? "当前会话状态为 " + session.getStatus() + "，不可输入"
+                    : "当前会话状态为 " + session.getStatus() + "：" + exitReason);
         }
         try {
             processSupervisor.sendInput(sessionId, content, appendNewLine);
@@ -320,6 +325,44 @@ public class SessionAppService {
             throw new BusinessException("当前应用实例暂不支持 STRUCTURED 模式，请改用 RAW 终端协作模式");
         }
         return normalized;
+    }
+
+    private void reconcileMissingRunningProcesses() {
+        sessionMapper.findRunning().stream()
+                .filter(session -> SessionStatus.RUNNING.name().equals(session.getStatus()))
+                .forEach(session -> reconcileMissingRunningProcess(session, true));
+    }
+
+    private AiSession reconcileMissingRunningProcess(AiSession session, boolean publishEvent) {
+        if (!SessionStatus.RUNNING.name().equals(session.getStatus()) || processSupervisor.hasProcess(session.getId())) {
+            return session;
+        }
+
+        String now = OffsetDateTime.now().toString();
+        sessionMapper.updateStatus(
+                session.getId(),
+                SessionStatus.FAILED.name(),
+                now,
+                -1,
+                MISSING_PROCESS_EXIT_REASON,
+                now
+        );
+        syncFailedWorkspaceMetadata(session, MISSING_PROCESS_EXIT_REASON, now, publishEvent);
+        if (publishEvent) {
+            Map<String, Object> statusPayload = new LinkedHashMap<>();
+            statusPayload.put("status", SessionStatus.FAILED.name());
+            statusPayload.put("exitCode", -1);
+            statusPayload.put("exitReason", MISSING_PROCESS_EXIT_REASON);
+            statusPayload.put("endedAt", now);
+            sessionEventPublisher.publish("session.status.changed", session.getId(), statusPayload);
+
+            Map<String, Object> errorPayload = new LinkedHashMap<>();
+            errorPayload.put("message", MISSING_PROCESS_EXIT_REASON);
+            sessionEventPublisher.publish("session.error", session.getId(), errorPayload);
+        }
+
+        AiSession updated = sessionMapper.findById(session.getId());
+        return updated == null ? session : updated;
     }
 
     private void syncFailedWorkspaceMetadata(AiSession session, String exitReason, String updatedAt, boolean publishEvent) {

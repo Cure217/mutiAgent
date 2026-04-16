@@ -13,6 +13,8 @@ public interface ProcessSupervisor {
 
     void stop(String sessionId, StopMode stopMode);
 
+    boolean hasProcess(String sessionId);
+
     List<ProcessRuntime> listRunning();
 
     long countRunning();

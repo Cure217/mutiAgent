@@ -70,6 +70,11 @@ public interface AppInstanceMapper {
     @Update("UPDATE app_instance SET last_start_at = #{lastStartAt}, updated_at = #{updatedAt} WHERE id = #{id}")
     int updateLastStartAt(@Param("id") String id, @Param("lastStartAt") String lastStartAt, @Param("updatedAt") String updatedAt);
 
+    @Update("UPDATE app_instance SET executable_path = #{executablePath}, updated_at = #{updatedAt} WHERE id = #{id}")
+    int updateExecutablePath(@Param("id") String id,
+                             @Param("executablePath") String executablePath,
+                             @Param("updatedAt") String updatedAt);
+
     @Select("SELECT COUNT(1) FROM app_instance")
     long countAll();
 }

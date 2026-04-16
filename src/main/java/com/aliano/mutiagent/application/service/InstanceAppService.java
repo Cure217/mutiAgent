@@ -44,7 +44,9 @@ public class InstanceAppService {
 
     public List<AppInstance> list(String appType, Boolean enabled, String keyword) {
         Integer enabledFlag = enabled == null ? null : Boolean.TRUE.equals(enabled) ? 1 : 0;
-        return appInstanceMapper.findAll(appType, enabledFlag, keyword);
+        return appInstanceMapper.findAll(appType, enabledFlag, keyword).stream()
+                .map(instance -> sanitizeLegacyExecutablePath(instance, null))
+                .toList();
     }
 
     public AppInstance get(String id) {
@@ -52,7 +54,7 @@ public class InstanceAppService {
         if (instance == null) {
             throw new BusinessException("应用实例不存在");
         }
-        return instance;
+        return sanitizeLegacyExecutablePath(instance, null);
     }
 
     public AppInstance create(CreateInstanceRequest request) {
@@ -66,7 +68,7 @@ public class InstanceAppService {
         instance.setAdapterType(adapterType);
         instance.setRuntimeEnv(request.runtimeEnv());
         instance.setLaunchMode(request.launchMode());
-        instance.setExecutablePath(request.executablePath());
+        instance.setExecutablePath(normalizeExecutablePath(request.executablePath()));
         instance.setLaunchCommand(request.launchCommand());
         instance.setArgsJson(writeJson(normalizeArgs(request.appType(), adapterType, request.launchCommand(), request.args())));
         instance.setWorkdir(request.workdir());
@@ -88,7 +90,7 @@ public class InstanceAppService {
         instance.setAdapterType(adapterType);
         instance.setRuntimeEnv(request.runtimeEnv());
         instance.setLaunchMode(request.launchMode());
-        instance.setExecutablePath(request.executablePath());
+        instance.setExecutablePath(normalizeExecutablePath(request.executablePath()));
         instance.setLaunchCommand(request.launchCommand());
         instance.setArgsJson(writeJson(normalizeArgs(request.appType(), adapterType, request.launchCommand(), request.args())));
         instance.setWorkdir(request.workdir());
@@ -108,6 +110,8 @@ public class InstanceAppService {
 
     public InstanceTestLaunchResult testLaunch(String id) {
         AppInstance instance = get(id);
+        List<String> warnings = new ArrayList<>();
+        sanitizeLegacyExecutablePath(instance, warnings);
         AIAdapter adapter = adapterRegistry.resolve(instance);
 
         LaunchPlan launchPlan;
@@ -121,7 +125,6 @@ public class InstanceAppService {
             throw new BusinessException("测试启动校验失败: 未生成有效的启动命令");
         }
 
-        List<String> warnings = new ArrayList<>();
         String executable = launchPlan.command().get(0);
         String resolvedExecutable = resolveExecutable(executable, warnings);
         String workingDirectory = normalizeWorkingDirectory(launchPlan.workingDirectory());
@@ -233,6 +236,51 @@ public class InstanceAppService {
             return path.toString();
         } catch (InvalidPathException exception) {
             throw new BusinessException("工作目录非法: " + workingDirectory, exception);
+        }
+    }
+
+    private String normalizeExecutablePath(String executablePath) {
+        if (!StringUtils.hasText(executablePath)) {
+            return null;
+        }
+        String normalized = executablePath.trim();
+        if (!looksLikePath(normalized)) {
+            return normalized;
+        }
+        try {
+            Path path = Path.of(normalized).toAbsolutePath().normalize();
+            if (Files.exists(path) && Files.isDirectory(path)) {
+                throw new BusinessException("可执行路径不能是目录: " + path);
+            }
+            return path.toString();
+        } catch (InvalidPathException exception) {
+            throw new BusinessException("可执行程序路径非法: " + executablePath, exception);
+        }
+    }
+
+    private AppInstance sanitizeLegacyExecutablePath(AppInstance instance, List<String> warnings) {
+        if (instance == null || !StringUtils.hasText(instance.getExecutablePath())) {
+            return instance;
+        }
+        String executablePath = instance.getExecutablePath().trim();
+        if (!looksLikePath(executablePath)) {
+            return instance;
+        }
+        try {
+            Path path = Path.of(executablePath).toAbsolutePath().normalize();
+            if (!Files.exists(path) || !Files.isDirectory(path)) {
+                return instance;
+            }
+            String updatedAt = OffsetDateTime.now().toString();
+            instance.setExecutablePath(null);
+            instance.setUpdatedAt(updatedAt);
+            appInstanceMapper.updateExecutablePath(instance.getId(), null, updatedAt);
+            if (warnings != null) {
+                warnings.add("实例里的可执行路径原来指向目录，已自动清空并改为按启动命令兜底。");
+            }
+            return instance;
+        } catch (InvalidPathException ignored) {
+            return instance;
         }
     }
 

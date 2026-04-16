@@ -128,7 +128,7 @@ INSERT OR IGNORE INTO config (
     value_text,
     updated_at
 ) VALUES
-    ('cfg_runtime_default_project_path', 'runtime', 'defaultProjectPath', 'string', 'D:\\Project\\ali\\260409', CURRENT_TIMESTAMP),
+    ('cfg_runtime_default_project_path', 'runtime', 'defaultProjectPath', 'string', '', CURRENT_TIMESTAMP),
     ('cfg_runtime_default_shell', 'runtime', 'defaultShell', 'string', 'powershell', CURRENT_TIMESTAMP),
     ('cfg_storage_session_log_retention_days', 'storage', 'sessionLogRetentionDays', 'number', '30', CURRENT_TIMESTAMP),
     ('cfg_ui_default_terminal_mode', 'ui', 'defaultTerminalMode', 'string', 'raw', CURRENT_TIMESTAMP),

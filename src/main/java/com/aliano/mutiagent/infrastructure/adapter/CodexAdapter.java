@@ -123,12 +123,14 @@ public class CodexAdapter extends GenericCliAdapter {
     }
 
     private Path resolveCodexWrapper(AppInstance instance) {
-        String configured = firstNonBlank(instance.getExecutablePath(), instance.getLaunchCommand());
-        if (StringUtils.hasText(configured)) {
-            Path configuredPath = Path.of(configured);
-            if (Files.exists(configuredPath)) {
-                return configuredPath;
-            }
+        Path configuredExecutable = resolveExecutableFile(instance.getExecutablePath());
+        if (configuredExecutable != null) {
+            return configuredExecutable;
+        }
+
+        Path configuredLaunchCommand = resolveExecutableFile(instance.getLaunchCommand());
+        if (configuredLaunchCommand != null) {
+            return configuredLaunchCommand;
         }
 
         List<Path> candidates = List.of(

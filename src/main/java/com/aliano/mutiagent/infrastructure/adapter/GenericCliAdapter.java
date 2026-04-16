@@ -7,6 +7,9 @@ import com.aliano.mutiagent.domain.session.AiSession;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -43,8 +46,9 @@ public class GenericCliAdapter implements AIAdapter {
             return buildWslLaunchPlan(instance, session, launchArgs);
         }
         List<String> command = new ArrayList<>();
-        if (StringUtils.hasText(instance.getExecutablePath())) {
-            command.add(instance.getExecutablePath());
+        String executablePath = resolveExecutablePath(instance.getExecutablePath());
+        if (StringUtils.hasText(executablePath)) {
+            command.add(executablePath);
         }
         if (StringUtils.hasText(instance.getLaunchCommand())) {
             if (command.isEmpty() || !instance.getLaunchCommand().equals(command.get(0))) {
@@ -135,7 +139,9 @@ public class GenericCliAdapter implements AIAdapter {
 
     private LaunchPlan buildWslLaunchPlan(AppInstance instance, AiSession session, List<String> args) {
         List<String> command = new ArrayList<>();
-        command.add(StringUtils.hasText(instance.getExecutablePath()) ? instance.getExecutablePath() : "wsl.exe");
+        command.add(StringUtils.hasText(resolveExecutablePath(instance.getExecutablePath()))
+                ? resolveExecutablePath(instance.getExecutablePath())
+                : "wsl.exe");
 
         String linuxWorkdir = resolveLinuxWorkdir(instance, session);
         if (StringUtils.hasText(linuxWorkdir)) {
@@ -151,8 +157,44 @@ public class GenericCliAdapter implements AIAdapter {
         return new LaunchPlan(command, readMap(instance.getEnvJson()), windowsWorkingDirectory);
     }
 
+    protected String resolveExecutablePath(String executablePath) {
+        if (!StringUtils.hasText(executablePath)) {
+            return null;
+        }
+        String trimmed = executablePath.trim();
+        if (!looksLikePath(trimmed)) {
+            return trimmed;
+        }
+        try {
+            Path path = Path.of(trimmed);
+            if (Files.exists(path) && Files.isDirectory(path)) {
+                return null;
+            }
+        } catch (InvalidPathException ignored) {
+        }
+        return trimmed;
+    }
+
+    protected Path resolveExecutableFile(String executablePath) {
+        String normalized = resolveExecutablePath(executablePath);
+        if (!StringUtils.hasText(normalized) || !looksLikePath(normalized)) {
+            return null;
+        }
+        try {
+            Path path = Path.of(normalized);
+            return Files.isRegularFile(path) ? path : null;
+        } catch (InvalidPathException ignored) {
+            return null;
+        }
+    }
+
+    protected boolean looksLikePath(String value) {
+        return StringUtils.hasText(value)
+                && (value.contains("\\") || value.contains("/") || value.contains(":"));
+    }
+
     private boolean shouldLaunchByWsl(AppInstance instance) {
-        String executable = firstNonBlank(instance.getExecutablePath(), instance.getLaunchCommand());
+        String executable = firstNonBlank(resolveExecutablePath(instance.getExecutablePath()), instance.getLaunchCommand());
         return "wsl".equalsIgnoreCase(instance.getRuntimeEnv())
                 || (StringUtils.hasText(executable) && executable.toLowerCase(Locale.ROOT).endsWith("wsl.exe"));
     }

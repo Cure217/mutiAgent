@@ -107,7 +107,10 @@ public class LocalProcessSupervisor implements ProcessSupervisor {
 
     @Override
     public void resizeTerminal(String sessionId, int cols, int rows) {
-        ManagedProcess managedProcess = requireProcess(sessionId);
+        ManagedProcess managedProcess = processRegistry.get(sessionId);
+        if (managedProcess == null) {
+            return;
+        }
         if (managedProcess.process instanceof PtyProcess ptyProcess) {
             try {
                 ptyProcess.setWinSize(new WinSize(cols, rows));
@@ -135,6 +138,11 @@ public class LocalProcessSupervisor implements ProcessSupervisor {
             Thread.currentThread().interrupt();
             managedProcess.process.destroyForcibly();
         }
+    }
+
+    @Override
+    public boolean hasProcess(String sessionId) {
+        return processRegistry.containsKey(sessionId);
     }
 
     private Process startRegularProcess(LaunchPlan launchPlan, Map<String, String> environment) throws IOException {
@@ -272,12 +280,12 @@ public class LocalProcessSupervisor implements ProcessSupervisor {
     private void watchExit(ManagedProcess managedProcess) {
         try {
             int exitCode = managedProcess.process.waitFor();
-            processRegistry.remove(managedProcess.context.session().getId());
             sessionStreamAppService.handleProcessExit(managedProcess.context.session().getId(), exitCode);
+            processRegistry.remove(managedProcess.context.session().getId());
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            processRegistry.remove(managedProcess.context.session().getId());
             sessionStreamAppService.handleSupervisorError(managedProcess.context.session().getId(), exception.getMessage());
+            processRegistry.remove(managedProcess.context.session().getId());
         }
     }
 
