@@ -7,6 +7,7 @@ import com.aliano.mutiagent.application.dto.SessionTimelineItem;
 import com.aliano.mutiagent.application.dto.SessionWorkspaceMeta;
 import com.aliano.mutiagent.application.dto.StopSessionRequest;
 import com.aliano.mutiagent.application.dto.UpdateSessionWorkspaceRequest;
+import com.aliano.mutiagent.application.service.CommandAppService;
 import com.aliano.mutiagent.application.service.SessionAppService;
 import com.aliano.mutiagent.common.model.ApiResponse;
 import com.aliano.mutiagent.common.model.PageResponse;
@@ -29,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class SessionController {
 
+    private final CommandAppService commandAppService;
     private final SessionAppService sessionAppService;
 
     @GetMapping
@@ -52,17 +54,12 @@ public class SessionController {
 
     @PostMapping
     public ApiResponse<AiSession> create(@Valid @RequestBody CreateSessionRequest request) {
-        return ApiResponse.success(sessionAppService.createAndStart(request));
+        return ApiResponse.success(commandAppService.createSession(request));
     }
 
     @PostMapping("/{id}/input")
     public ApiResponse<Void> input(@PathVariable String id, @Valid @RequestBody SendInputRequest request) {
-        sessionAppService.sendInput(
-                id,
-                request.content(),
-                request.appendNewLine() == null || request.appendNewLine(),
-                request.recordInput() == null || request.recordInput()
-        );
+        commandAppService.sendSessionInput(id, request);
         return ApiResponse.success();
     }
 
@@ -72,7 +69,7 @@ public class SessionController {
         if (request != null && request.stopMode() != null) {
             stopMode = StopMode.valueOf(request.stopMode().toUpperCase());
         }
-        sessionAppService.stopSession(id, stopMode);
+        commandAppService.stopSession(id, stopMode);
         return ApiResponse.success();
     }
 
