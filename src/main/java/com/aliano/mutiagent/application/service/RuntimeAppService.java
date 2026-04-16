@@ -1,6 +1,7 @@
 package com.aliano.mutiagent.application.service;
 
 import com.aliano.mutiagent.config.MutiAgentProperties;
+import com.aliano.mutiagent.infrastructure.event.ClientAttachmentRegistry;
 import com.aliano.mutiagent.infrastructure.persistence.mapper.AppInstanceMapper;
 import com.aliano.mutiagent.infrastructure.persistence.mapper.MessageMapper;
 import com.aliano.mutiagent.infrastructure.persistence.mapper.SessionMapper;
@@ -21,6 +22,7 @@ public class RuntimeAppService {
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
     private final ProcessSupervisor processSupervisor;
+    private final ClientAttachmentRegistry clientAttachmentRegistry;
     private final MutiAgentProperties properties;
 
     public Map<String, Object> health() {
@@ -30,6 +32,8 @@ public class RuntimeAppService {
         result.put("dbPath", properties.resolveDatabasePath().toString());
         result.put("baseDir", properties.resolveBaseDir().toString());
         result.put("runningProcesses", processSupervisor.countRunning());
+        result.put("attachedClientCount", clientAttachmentRegistry.countAll());
+        result.put("observingSessionAttachmentCount", clientAttachmentRegistry.countObservingTargetType("session"));
         return result;
     }
 
@@ -40,6 +44,8 @@ public class RuntimeAppService {
         result.put("runningSessionCount", sessionMapper.countRunning());
         result.put("messageCount", messageMapper.countAll());
         result.put("runningProcessCount", processSupervisor.countRunning());
+        result.put("attachedClientCount", clientAttachmentRegistry.countAll());
+        result.put("observingSessionAttachmentCount", clientAttachmentRegistry.countObservingTargetType("session"));
         return result;
     }
 
