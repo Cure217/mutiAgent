@@ -12,7 +12,12 @@ public interface OperationLogMapper {
             "<script>",
             "SELECT * FROM operation_log",
             "WHERE 1 = 1",
-            "<if test='targetType != null and targetType != \"\"'> AND target_type = #{targetType}</if>",
+            "<if test='targetTypes != null and targetTypes.size() > 0'>",
+            "AND target_type IN",
+            "<foreach collection='targetTypes' item='targetType' open='(' separator=',' close=')'>",
+            "#{targetType}",
+            "</foreach>",
+            "</if>",
             "<if test='targetId != null and targetId != \"\"'> AND target_id = #{targetId}</if>",
             "<if test='action != null and action != \"\"'> AND action = #{action}</if>",
             "<if test='operatorName != null and operatorName != \"\"'> AND operator_name = #{operatorName}</if>",
@@ -20,7 +25,7 @@ public interface OperationLogMapper {
             "LIMIT #{limit} OFFSET #{offset}",
             "</script>"
     })
-    List<OperationLogRecord> findPage(@Param("targetType") String targetType,
+    List<OperationLogRecord> findPage(@Param("targetTypes") List<String> targetTypes,
                                       @Param("targetId") String targetId,
                                       @Param("action") String action,
                                       @Param("operatorName") String operatorName,
@@ -31,13 +36,18 @@ public interface OperationLogMapper {
             "<script>",
             "SELECT COUNT(1) FROM operation_log",
             "WHERE 1 = 1",
-            "<if test='targetType != null and targetType != \"\"'> AND target_type = #{targetType}</if>",
+            "<if test='targetTypes != null and targetTypes.size() > 0'>",
+            "AND target_type IN",
+            "<foreach collection='targetTypes' item='targetType' open='(' separator=',' close=')'>",
+            "#{targetType}",
+            "</foreach>",
+            "</if>",
             "<if test='targetId != null and targetId != \"\"'> AND target_id = #{targetId}</if>",
             "<if test='action != null and action != \"\"'> AND action = #{action}</if>",
             "<if test='operatorName != null and operatorName != \"\"'> AND operator_name = #{operatorName}</if>",
             "</script>"
     })
-    long countPage(@Param("targetType") String targetType,
+    long countPage(@Param("targetTypes") List<String> targetTypes,
                    @Param("targetId") String targetId,
                    @Param("action") String action,
                    @Param("operatorName") String operatorName);
