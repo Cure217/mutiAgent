@@ -33,6 +33,7 @@ public class SessionStreamAppService {
     private final SessionEventPublisher sessionEventPublisher;
     private final IdGenerator idGenerator;
     private final ObjectMapper objectMapper;
+    private final RuntimeDiagnosticsTracker runtimeDiagnosticsTracker;
     private final ConcurrentMap<String, Object> messageLocks = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, StopMode> stopRequests = new ConcurrentHashMap<>();
 
@@ -82,6 +83,7 @@ public class SessionStreamAppService {
         String exitReason = resolveExitReason(sessionId, exitCode, requestedStopMode);
         sessionMapper.updateStatus(sessionId, status, now, exitCode, exitReason, now);
         syncWorkspaceStateAfterExit(sessionId, status, exitReason, now, stoppedByUser);
+        runtimeDiagnosticsTracker.recordProcessExit(sessionId, status, exitCode, exitReason, now);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("status", status);
@@ -92,6 +94,7 @@ public class SessionStreamAppService {
     }
 
     public void handleSupervisorError(String sessionId, String errorMessage) {
+        runtimeDiagnosticsTracker.recordSupervisorError(sessionId, errorMessage);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("message", errorMessage);
         sessionEventPublisher.publish("session.error", sessionId, payload);
